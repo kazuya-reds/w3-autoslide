@@ -152,10 +152,10 @@ with st.sidebar:
 
 col1, col2 = st.columns(2)
 with col1:
-    client_name = st.text_input("提案先（顧客名）", "例）〇〇自動車販売株式会社 御中")
-    doc_title = st.text_input("資料タイトル", "例）新人スタッフ向け オンボーディング支援サービス提案")
+    client_name = st.text_input("提案先（顧客名）", "例）役員会 各位")
+    doc_title = st.text_input("資料タイトル", "例）経費精算システム導入による業務効率化提案")
 with col2:
-    sender_name = st.text_input("作成者・部署など", "例）AI推進プロジェクト 営業推進部")
+    sender_name = st.text_input("作成者・部署など", "例）経理部・DX推進チーム")
     uploaded_files = st.file_uploader("挿入画像（任意・複数可）", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
 
 image_contexts = []
@@ -168,7 +168,8 @@ if uploaded_files:
             image_contexts.append({"index": i, "filename": f.name, "description": desc})
 
 raw_memo = st.text_area("資料の内容メモ", 
-"""経費精算の件、現場から不満多すぎるからどうにかしたい。
+"""例）
+経費精算の件、現場から不満多すぎるからどうにかしたい。
 スマホで領収書パシャって撮ったら終わるようにできないかな？
 今、紙で提出してもらって経理で1枚ずつチェックしてるけど、月末マジで地獄。ミスも多いし。
 
