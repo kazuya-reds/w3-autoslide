@@ -147,7 +147,7 @@ def ensure_page_number(slide, page_num):
 # ==========================================
 with st.sidebar:
     st.header("⚙️ 設定")
-    api_key = st.text_input("Gemini APIキー", type="password")
+    api_key = st.secrets["GEMINI_API_KEY"]
     st.info("テンプレート: 資料作成テンプレート_A4横.pptx を使用します")
 
 col1, col2 = st.columns(2)
