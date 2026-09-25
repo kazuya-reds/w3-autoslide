@@ -589,5 +589,11 @@ if st.button("✨資料を生成する✨"):
                         file_name=output_path,
                         mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
                     )
-            except Exception as e:
-                st.error(f"エラーが発生しました: {e}")
+                except Exception as e:
+                    error_message = str(e)
+                    # Gemini APIの混雑や回数制限エラーの場合
+                    if "503" in error_message or "UNAVAILABLE" in error_message or "429" in error_message:
+                        st.error("【サーバー混雑中】現在、AIサーバーへのアクセスが集中しています。恐れ入りますが、1〜2分ほど待ってから再度「資料を生成する」ボタンを押してください。")
+                    # それ以外のエラーの場合
+                    else:
+                        st.error(f"エラーが発生しました。時間を置いて再度お試しください。詳細: {e}")
