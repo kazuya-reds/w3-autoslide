@@ -147,8 +147,8 @@ def ensure_page_number(slide, page_num):
 # ==========================================
 with st.sidebar:
     st.header("⚙️ 設定")
-    api_key = st.secrets["GEMINI_API_KEY"]
-    st.info("テンプレート: 資料作成テンプレート_A4横.pptx を使用します")
+    api_key = st.secrets.get("GEMINI_API_KEY", "")
+    st.info("テンプレート: 資料作成テンプレート_A4横.pptx を使用します")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -262,7 +262,6 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
                     continue
 
         # 2. 補助項目（sub_title / sub_body）にデータが無い場合のみ、補助項目枠を削除
-        # ※ 補助項目にデータがある場合は、縦線も含めて絶対に削除しない（保護維持）
         if not has_sub_item and shape.has_text_frame:
             if "[[補助項目]]" in raw_text or "[[補助項目の本文]]" in raw_text:
                 shapes_to_remove.append(shape)
@@ -348,7 +347,7 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
 # ==========================================
 if st.button("✨資料を生成する✨"):
     if not api_key:
-        st.error("APIキーを入力してください。")
+        st.error("APIキーが設定されていません。.streamlit/secrets.toml をご確認ください。")
     elif not raw_memo.strip():
         st.error("提案メモを入力してください。")
     else:
@@ -421,7 +420,7 @@ if st.button("✨資料を生成する✨"):
 
                 status_box.success("✅ AI構造解析完了：PowerPointスライドを複製・構築中...")
 
-                prs = Presentation('資料作成テンプレート_A4横.pptx')
+                prs = Presentation('資料作成テンプレート_A4横.pptx')
                 tpl_slide_count = len(prs.slides)
                 
                 chapters = final_data.get("chapters", [])
@@ -589,11 +588,11 @@ if st.button("✨資料を生成する✨"):
                         file_name=output_path,
                         mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
                     )
-                except Exception as e:
-                    error_message = str(e)
-                    # Gemini APIの混雑や回数制限エラーの場合
-                    if "503" in error_message or "UNAVAILABLE" in error_message or "429" in error_message:
-                        st.error("【サーバー混雑中】現在、AIサーバーへのアクセスが集中しています。恐れ入りますが、1〜2分ほど待ってから再度「資料を生成する」ボタンを押してください。")
-                    # それ以外のエラーの場合
-                    else:
-                        st.error(f"エラーが発生しました。時間を置いて再度お試しください。詳細: {e}")
+            except Exception as e:
+                error_message = str(e)
+                # Gemini APIの混雑や回数制限エラーの場合
+                if "503" in error_message or "UNAVAILABLE" in error_message or "429" in error_message or "RESOURCE_EXHAUSTED" in error_message:
+                    st.error("【サーバー混雑中】現在、AIサーバーへのアクセスが集中しています。恐れ入りますが、1〜2分ほど待ってから再度「資料を生成する」ボタンを押してください。")
+                # それ以外のエラーの場合
+                else:
+                    st.error(f"エラーが発生しました。時間を置いて再度お試しください。詳細: {e}")
