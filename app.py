@@ -421,9 +421,30 @@ if st.button("✨資料を生成する✨"):
                 status_box.success("✅ AI構造解析完了：PowerPointスライドを複製・構築中...")
 
                 import os
-                template_path = os.path.join(os.path.dirname(__file__), '資料作成テンプレート_A4横.pptx')
+                import unicodedata
+
+                # テンプレートファイルを自動探索（文字コードのズレを完全吸収）
+                current_dir = os.path.dirname(os.path.abspath(__file__))
+                template_path = os.path.join(current_dir, '資料作成テンプレート_A4横.pptx')
+
+                # 直接見つからない場合は、ディレクトリ内の.pptxファイルを自動検出
+                if not os.path.exists(template_path):
+                    all_files = os.listdir(current_dir)
+                    target_norm = unicodedata.normalize('NFC', '資料作成テンプレート_A4横.pptx')
+                    for f in all_files:
+                        if f.endswith('.pptx'):
+                            if unicodedata.normalize('NFC', f) == target_norm or "テンプレート" in f:
+                                template_path = os.path.join(current_dir, f)
+                                break
+                    else:
+                        # 万が一名前が違っても、フォルダ内の唯一のpptxファイルを採用
+                        pptx_list = [f for f in all_files if f.endswith('.pptx')]
+                        if pptx_list:
+                            template_path = os.path.join(current_dir, pptx_list[0])
+                        else:
+                            raise FileNotFoundError(f"テンプレートファイルが見つかりません。フォルダ内のファイル: {all_files}")
+
                 prs = Presentation(template_path)
-                tpl_slide_count = len(prs.slides)
                 
                 chapters = final_data.get("chapters", [])
                 today_str = datetime.date.today().strftime("%Y/%m/%d")
