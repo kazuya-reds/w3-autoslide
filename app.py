@@ -420,7 +420,9 @@ if st.button("✨資料を生成する✨"):
 
                 status_box.success("✅ AI構造解析完了：PowerPointスライドを複製・構築中...")
 
-                prs = Presentation('資料作成テンプレート_A4横.pptx')
+                import os
+                template_path = os.path.join(os.path.dirname(__file__), '資料作成テンプレート_A4横.pptx')
+                prs = Presentation(template_path)
                 tpl_slide_count = len(prs.slides)
                 
                 chapters = final_data.get("chapters", [])
