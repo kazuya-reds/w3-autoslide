@@ -445,6 +445,7 @@ if st.button("✨資料を生成する✨"):
                             raise FileNotFoundError(f"テンプレートファイルが見つかりません。フォルダ内のファイル: {all_files}")
 
                 prs = Presentation(template_path)
+                tpl_slide_count = len(prs.slides)
                 
                 chapters = final_data.get("chapters", [])
                 today_str = datetime.date.today().strftime("%Y/%m/%d")
