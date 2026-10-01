@@ -2,6 +2,7 @@ import streamlit as st
 from google import genai
 from pptx import Presentation
 from pptx.util import Pt
+from pptx.chart.data import CategoryChartData
 from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
 from PIL import Image
 import json
@@ -89,7 +90,7 @@ def duplicate_slide_in_prs(prs, src_idx):
         sp = shp._element
         sp.getparent().remove(sp)
         
-    # ソーススライドの全シェイプ（図形・テキスト・画像・表）を複製
+    # ソーススライドの全シェイプ（図形・テキスト・画像・表・グラフ）を複製
     for shape in src_slide.shapes:
         new_el = copy.deepcopy(shape._element)
         if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
@@ -375,6 +376,8 @@ if st.button("✨資料を生成する✨"):
                 1. メモの主要項目を整理し、プレゼンに最適な3〜7個の章（chapters）にまとめてください。
                 2. 各章のコンテンツに合わせて、最適な "layout_type" を以下から選定してください:
                    - "text": 概要・課題・特徴・メリット・期待効果など
+                   - "bar_chart": 比較・実績・数値変化・構成（棒グラフ）
+                   - "line_chart": 時系列推移・トレンド・月次変化（折れ線グラフ）
                    - "table": 料金プラン・比較表・一覧データなど
                    - "step": 導入手順・運用フロー・タイムラインなど（最大4ステップ）
                    - "checklist": 確認事項・必要書類・チェックリストなど
@@ -389,7 +392,9 @@ if st.button("✨資料を生成する✨"):
                 5. "table" の場合:
                    - "column_count": 2, 3, 4 のいずれか
                    - "table": {{ "headers": ["列見出し1", "列見出し2", ...], "rows": [ ["行1列1", "行1列2", ...], ["行2列1", ...] ] }} の形式で格納してください。
-                6. 【重要ルール】
+                6. "bar_chart" または "line_chart" の場合:
+                   - "chart_info": メモ内の数値（売上・削減時間・推移等）を抽出し、タイトル、カテゴリ名、系列名、数値配列を正しく格納してください。
+                7. 【重要ルール】
                    - "body" や "sub_body" などの本文項目は絶対に空欄にせず、文字を出力してください。
                    - 「提案内容」などのスライドでは、入力データのメモにある具体的なアイデア（OCR機能など）を漏れなく抽出し、必ず文章や箇条書きで反映させてください。
 
@@ -399,16 +404,22 @@ if st.button("✨資料を生成する✨"):
                   "chapters": [
                     {{
                       "chapter_title": "章タイトル",
-                      "layout_type": "text",
+                      "layout_type": "text", 
                       "main_item": "主要見出し（15文字以内）",
-                      "body": "本文テキスト（※絶対に空欄にせず、入力データから抽出した内容を必ず2〜4点の箇条書き等で具体的に記述すること。情報が足りない場合はビジネスの文脈から推測してでも必ず出力すること）",
+                      "body": "本文テキスト（※絶対に空欄にせず、入力データから抽出した内容を必ず2〜4点の箇条書き等で具体的に記述すること。情報が足りない場合はビジネス...",
                       "sub_title": "補助項目タイトル",
                       "sub_body": "補助項目本文",
                       "notice": "",
                       "step_descs": [],
                       "table": {{ "headers": [], "rows": [] }},
                       "assigned_image_indices": [],
-                      "image_captions": []
+                      "image_captions": [],
+                      "chart_info": {{
+                        "title": "グラフのタイトル（推移や比較を表現）",
+                        "categories": ["項目1", "項目2", "項目3", "項目4"],
+                        "series_name": "系列名（例：売上, 件数など）",
+                        "values": [10, 20, 30, 40]
+                      }}
                     }}
                   ]
                 }}
@@ -491,7 +502,13 @@ if st.button("✨資料を生成する✨"):
 
                     # テンプレート上の複製元インデックス判定
                     target_template_idx = 2
-                    if layout_type == "checklist" or "確認" in clean_ch_title or "チェック" in clean_ch_title:
+                    if layout_type == "bar_chart" or "棒グラフ" in clean_ch_title:
+                        # テンプレート末尾側に追加された棒グラフ用スライドを選択
+                        target_template_idx = tpl_slide_count - 2 if tpl_slide_count >= 11 else (tpl_slide_count - 1 if tpl_slide_count > 2 else 2)
+                    elif layout_type == "line_chart" or "折れ線" in clean_ch_title:
+                        # テンプレート末尾側に追加された折れ線グラフ用スライドを選択
+                        target_template_idx = tpl_slide_count - 1 if tpl_slide_count > 2 else 2
+                    elif layout_type == "checklist" or "確認" in clean_ch_title or "チェック" in clean_ch_title:
                         target_template_idx = 9 if tpl_slide_count > 9 else 5
                     elif layout_type == "step" or "フロー" in clean_ch_title or "流れ" in clean_ch_title or "手順" in clean_ch_title:
                         target_template_idx = 5 if tpl_slide_count > 5 else 4
@@ -560,6 +577,28 @@ if st.button("✨資料を生成する✨"):
                         chapter_num=ch_num_str, chapter_title=clean_ch_title,
                         assigned_files=assigned_files, captions=captions
                     )
+
+                    # グラフデータの動的更新（棒グラフ・折れ線グラフ用）
+                    chart_info = ch.get("chart_info")
+                    if chart_info and layout_type in ["bar_chart", "line_chart"]:
+                        for shape in ch_slide.shapes:
+                            if shape.has_chart:
+                                chart = shape.chart
+                                
+                                # グラフタイトルの更新
+                                if chart_info.get("title") and chart.has_title:
+                                    chart.chart_title.text_frame.text = str(chart_info.get("title"))
+                                
+                                categories = chart_info.get("categories", [])
+                                series_name = chart_info.get("series_name", "データ")
+                                values = chart_info.get("values", [])
+                                
+                                if categories and values:
+                                    chart_data = CategoryChartData()
+                                    chart_data.categories = categories
+                                    chart_data.add_series(series_name, values)
+                                    chart.replace_data(chart_data)
+                                break
 
                 # --- 4. INDEX（目次）スライドへデータ反映 ---
                 for k in range(len(chapters) + 1, 7):
