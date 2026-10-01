@@ -4,6 +4,7 @@ from pptx import Presentation
 from pptx.util import Pt
 from pptx.chart.data import CategoryChartData
 from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
+from pptx.enum.chart import XL_CHART_TYPE
 from PIL import Image
 import json
 import datetime
@@ -11,6 +12,8 @@ import io
 import re
 import time
 import copy
+import os
+import unicodedata
 
 st.set_page_config(page_title="W3 AutoSlide", layout="wide")
 
@@ -145,6 +148,32 @@ def ensure_page_number(slide, page_num):
         p = tf.paragraphs[0]
         p.text = str(page_num)
         p.font.size = Pt(12)
+
+# ==========================================
+# テンプレート自動診断関数
+# ==========================================
+def inspect_template(template_path):
+    """テンプレート内のスライド構成とグラフ位置を自動判定"""
+    prs = Presentation(template_path)
+    info = {
+        "count": len(prs.slides),
+        "bar_chart_idx": None,
+        "line_chart_idx": None
+    }
+    for idx, sld in enumerate(prs.slides):
+        for shape in sld.shapes:
+            if shape.has_chart:
+                c_type = shape.chart.chart_type
+                # 折れ線グラフ系
+                if c_type in [XL_CHART_TYPE.LINE, XL_CHART_TYPE.LINE_MARKERS, XL_CHART_TYPE.LINE_STACKED] or "LINE" in str(c_type):
+                    info["line_chart_idx"] = idx
+                # 棒グラフ系
+                elif c_type in [XL_CHART_TYPE.COLUMN_CLUSTERED, XL_CHART_TYPE.BAR_CLUSTERED] or "BAR" in str(c_type) or "COLUMN" in str(c_type):
+                    info["bar_chart_idx"] = idx
+                else:
+                    if info["bar_chart_idx"] is None:
+                        info["bar_chart_idx"] = idx
+    return info
 
 # ==========================================
 # 1. 入力UI
@@ -353,88 +382,7 @@ if st.button("✨資料を生成する✨"):
         status_box = st.empty()
         with st.spinner("AIがメモを解析し、資料を構築中..."):
             try:
-                client = genai.Client(api_key=api_key)
-
-                prompt_data = {
-                    "client_name": client_name,
-                    "doc_title": doc_title,
-                    "raw_memo": raw_memo,
-                    "image_contexts": image_contexts
-                }
-
-                # 高精度構造解析プロンプト（全レイアウト完全サポート版）
-                single_pass_prompt = f"""
-                あなたはプレゼン資料作成のプロコンサルタントです。
-                以下の入力を直接分析し、メモの情報を一切落とさずにプレゼンスライド用のJSONを作成してください。
-
-                【入力データ】
-                {json.dumps(prompt_data, ensure_ascii=False, indent=2)}
-
-                【レイアウト＆情報抽出ルール】
-                1. メモの主要項目を整理し、プレゼンに最適な3〜7個の章（chapters）にまとめてください。
-                2. 各章のコンテンツに合わせて、最適な "layout_type" を以下から選定してください:
-                   - "line_chart": 【最優先】月別推移、売上推移、時系列トレンドなどの数値変化がある場合
-                   - "bar_chart": 【最優先】項目別比較、実績数値の比較、カテゴリ別実績がある場合
-                   - "checklist": 確認事項・必要書類・体制確立の要点・チェックリストなど
-                   - "step": 導入手順・運用フロー・タイムライン・実行ステップ（最大4ステップ）
-                   - "text": 概要・課題・特徴・メリット・期待効果・要因分析など
-                   - "table": 料金プランや機能比較などのテキスト表（※数値推移の時は絶対にtableではなくchartを選ぶこと）
-                3. 情報の分配ルール:
-                   - "main_item": キャッチコピーまたは主要項目（15文字以内）
-                   - "body": メインの概要文章
-                   - "sub_title": 補助項目のタイトル（例: "主な課題点", "体制確立の要点" など）
-                   - "sub_body": 補助項目の本文
-                   - "notice": 注意事項（※記号の文など）。無ければ空文字 ""
-                4. "checklist" の場合:
-                   - "intro": チェックリスト前の導入文章（例: "目標達成に向けた重要確認項目は以下の通りです" など）
-                   - "items": ["確認項目1", "確認項目2", "確認項目3", "確認項目4"]（2〜6個の具体的なチェック項目配列）
-                   - "guide": チェック後の案内文章（例: "全項目の確認完了後、プロジェクトを推進します" など）
-                5. "line_chart" または "bar_chart" の場合:
-                   - "chart_info": 必ずメモから数値を抽出し、数値配列（values: 数字のみ）とカテゴリ配列（categories）を作成してください。
-                6. "step" の場合:
-                   - "step_descs": [ "ステップ1の説明", "ステップ2の説明", "ステップ3の説明", "ステップ4の説明" ] の配列形式。
-                7. 【重要ルール】
-                   - "body" や "sub_body" などの本文項目は絶対に空欄にせず、文字を出力してください。
-
-                【出力形式】
-                純粋なJSONのみを出力してください。
-                {{
-                  "chapters": [
-                    {{
-                      "chapter_title": "章タイトル",
-                      "layout_type": "text", 
-                      "main_item": "主要見出し（15文字以内）",
-                      "body": "本文テキスト",
-                      "sub_title": "補助項目タイトル",
-                      "sub_body": "補助項目本文",
-                      "notice": "",
-                      "intro": "チェックリスト導入文",
-                      "items": ["項目1", "項目2", "項目3"],
-                      "guide": "チェック後の案内文",
-                      "step_descs": [],
-                      "table": {{ "headers": [], "rows": [] }},
-                      "assigned_image_indices": [],
-                      "image_captions": [],
-                      "chart_info": {{
-                        "title": "グラフのタイトル",
-                        "categories": ["7月", "8月", "9月", "10月"],
-                        "series_name": "売上高",
-                        "values": [100, 150, 130, 200]
-                      }}
-                    }}
-                  ]
-                }}
-                """
-
-                txt_res = call_gemini_with_retry(client, single_pass_prompt)
-                m_json = re.search(r'\{[\s\S]*\}', txt_res)
-                final_data = json.loads(m_json.group(0) if m_json else txt_res)
-
-                status_box.success("✅ AI構造解析完了：PowerPointスライドを複製・構築中...")
-
-                import os
-                import unicodedata
-
+                # テンプレートファイルの検出
                 current_dir = os.path.dirname(os.path.abspath(__file__))
                 template_path = os.path.join(current_dir, '資料作成テンプレート_A4横.pptx')
 
@@ -451,11 +399,92 @@ if st.button("✨資料を生成する✨"):
                         if pptx_list:
                             template_path = os.path.join(current_dir, pptx_list[0])
                         else:
-                            raise FileNotFoundError(f"テンプレートファイルが見つかりません。フォルダ内のファイル: {all_files}")
+                            raise FileNotFoundError(f"テンプレートファイルが見つかりません。")
 
+                # テンプレート自動診断
+                tpl_diag = inspect_template(template_path)
                 prs = Presentation(template_path)
                 tpl_slide_count = len(prs.slides)
-                
+
+                # 画面上にテンプレート診断情報を表示（確認用）
+                st.caption(f"ℹ️ テンプレート確認: 全{tpl_slide_count}枚 / 折れ線スライド: {tpl_diag['line_chart_idx']}番 / 棒グラフスライド: {tpl_diag['bar_chart_idx']}番")
+
+                client = genai.Client(api_key=api_key)
+
+                prompt_data = {
+                    "client_name": client_name,
+                    "doc_title": doc_title,
+                    "raw_memo": raw_memo,
+                    "image_contexts": image_contexts
+                }
+
+                # 高精度構造解析プロンプト
+                single_pass_prompt = f"""
+                あなたはプレゼン資料作成のプロコンサルタントです。
+                以下の入力を直接分析し、メモの情報を一切落とさずにプレゼンスライド用のJSONを作成してください。
+
+                【入力データ】
+                {json.dumps(prompt_data, ensure_ascii=False, indent=2)}
+
+                【レイアウト＆情報抽出ルール】
+                1. メモの主要項目を整理し、プレゼンに最適な3〜7個の章（chapters）にまとめてください。
+                2. 各章のコンテンツに合わせて、最適な "layout_type" を以下から選定してください:
+                   - "line_chart": 【最優先】月別推移、売上推移、時系列トレンドなどの数値変化がある場合
+                   - "bar_chart": 【最優先】項目別比較、実績数値の比較、カテゴリ別実績がある場合
+                   - "text": 概要・課題・特徴・メリット・期待効果・要因分析など
+                   - "step": 導入手順・運用フロー・タイムライン・実行ステップ（最大4ステップ）
+                   - "checklist": 確認事項・必要書類・チェックリストなど（※推移や分析には使わないこと）
+                   - "table": 料金プランや機能比較などのテキスト表
+                3. 情報の分配ルール:
+                   - "main_item": キャッチコピーまたは主要項目（15文字以内）
+                   - "body": メインの概要文章
+                   - "sub_title": 補助項目のタイトル（例: "主な課題点", "提供する主なコンテンツ", "対象別の具体的な効果" など）
+                   - "sub_body": 補助項目の本文
+                   - "notice": 注意事項（※記号の文など）。無ければ空文字 ""
+                4. "line_chart" または "bar_chart" の場合:
+                   - "chart_info": 必ずメモから数値を抽出し、数値配列（values: 数字のみ、例: [100, 150, 130, 200]）とカテゴリ配列（categories: 例: ["7月", "8月", "9月", "10月"]）を作成してください。
+                5. "step" の場合:
+                   - "step_descs": [ "ステップ1の説明", "ステップ2の説明", "ステップ3の説明", "ステップ4の説明" ] の配列形式。
+                6. "table" の場合:
+                   - "column_count": 2, 3, 4 のいずれか
+                   - "table": {{ "headers": ["列見出し1", "列見出し2", ...], "rows": [ ["行1列1", "行1列2", ...], ["行2列1", ...] ] }} の形式。
+                7. 【重要ルール】
+                   - "body" や "sub_body" などの本文項目は絶対に空欄にせず、文字を出力してください。
+                   - メモに売上や件数などの推移・実績が含まれている場合は、必ず1スライド以上 "line_chart" または "bar_chart" を使用してください。
+
+                【出力形式】
+                純粋なJSONのみを出力してください。
+                {{
+                  "chapters": [
+                    {{
+                      "chapter_title": "章タイトル",
+                      "layout_type": "line_chart", 
+                      "main_item": "主要見出し（15文字以内）",
+                      "body": "本文テキスト",
+                      "sub_title": "補助項目タイトル",
+                      "sub_body": "補助項目本文",
+                      "notice": "",
+                      "step_descs": [],
+                      "table": {{ "headers": [], "rows": [] }},
+                      "assigned_image_indices": [],
+                      "image_captions": [],
+                      "chart_info": {{
+                        "title": "グラフのタイトル",
+                        "categories": ["7月", "8月", "9月", "10月"],
+                        "series_name": "売上高（万円）",
+                        "values": [100, 150, 130, 200]
+                      }}
+                    }}
+                  ]
+                }}
+                """
+
+                txt_res = call_gemini_with_retry(client, single_pass_prompt)
+                m_json = re.search(r'\{[\s\S]*\}', txt_res)
+                final_data = json.loads(m_json.group(0) if m_json else txt_res)
+
+                status_box.success("✅ AI構造解析完了：PowerPointスライドを複製・構築中...")
+
                 chapters = final_data.get("chapters", [])
                 today_str = datetime.date.today().strftime("%Y/%m/%d")
 
@@ -497,16 +526,16 @@ if st.button("✨資料を生成する✨"):
                     assigned_files = [uploaded_files[i] for i in img_indices if uploaded_files and i < len(uploaded_files)]
                     captions = ch.get("image_captions", [])
 
-                    # テンプレート上の複製元インデックス判定
+                    # テンプレート上の複製元インデックス判定（自動検知）
                     target_template_idx = 2
                     
-                    if "line" in layout_type or "折れ線" in clean_ch_title or "推移" in clean_ch_title:
-                        target_template_idx = tpl_slide_count - 1 if tpl_slide_count > 2 else 2
-                    elif "bar" in layout_type or "chart" in layout_type or "グラフ" in clean_ch_title:
-                        target_template_idx = tpl_slide_count - 2 if tpl_slide_count >= 11 else (tpl_slide_count - 1 if tpl_slide_count > 2 else 2)
+                    if ("line" in layout_type or "折れ線" in clean_ch_title or "推移" in clean_ch_title) and tpl_diag["line_chart_idx"] is not None:
+                        target_template_idx = tpl_diag["line_chart_idx"]
+                    elif ("bar" in layout_type or "chart" in layout_type or "グラフ" in clean_ch_title) and tpl_diag["bar_chart_idx"] is not None:
+                        target_template_idx = tpl_diag["bar_chart_idx"]
                     elif layout_type == "checklist" or "確認" in clean_ch_title or "チェック" in clean_ch_title:
                         target_template_idx = 9 if tpl_slide_count > 9 else 5
-                    elif layout_type == "step" or "フロー" in clean_ch_title or "流れ" in clean_ch_title or "手順" in clean_ch_title:
+                    elif layout_type == "step" or "フロー" in clean_ch_title or "流れ" in clean_ch_title or "手順" in clean_ch_title or "アクション" in clean_ch_title:
                         target_template_idx = 5 if tpl_slide_count > 5 else 4
                     elif layout_type == "table" or "プラン" in clean_ch_title or "料金" in clean_ch_title:
                         tbl_data = ch.get("table", {})
@@ -559,7 +588,7 @@ if st.button("✨資料を生成する✨"):
 
                     ch_map["[[表の注記]]"] = notice_val if notice_val else "※詳細につきましてはお気軽にお問い合わせください。"
 
-                    # チェックリスト（自動補完付き）
+                    # チェックリスト
                     items = ch.get("items", [])
                     if not items:
                         raw_txt = ch.get("sub_body", "") or ch.get("body", "")
