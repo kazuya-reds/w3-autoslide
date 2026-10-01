@@ -76,22 +76,16 @@ def clean_notice_text(text):
     return re.sub(r'^(?:[※\*\:\s]|注意[：:]|注[：:])+', '', str(text).strip())
 
 # ==========================================
-# テンプレート・スライド物理複製クローンエンジン（安全・安定版）
+# テンプレート・スライド物理複製クローンエンジン
 # ==========================================
 def duplicate_slide_in_prs(prs, src_idx):
-    """
-    テンプレートの指定インデックスのスライドを複製（クローン）して
-    プレゼンテーションの末尾に安全に追加する関数
-    """
     src_slide = prs.slides[src_idx]
     new_slide = prs.slides.add_slide(src_slide.slide_layout)
     
-    # 自動追加された不要なデフォルト枠をクリア
     for shp in list(new_slide.shapes):
         sp = shp._element
         sp.getparent().remove(sp)
         
-    # ソーススライドの全シェイプ（図形・テキスト・画像・表・グラフ）を複製
     for shape in src_slide.shapes:
         new_el = copy.deepcopy(shape._element)
         
@@ -393,8 +387,8 @@ if st.button("✨資料を生成する✨"):
 
                 st.caption(f"ℹ️ テンプレート確認: 全{tpl_slide_count}枚 / 折れ線スライド: {tpl_diag['line_chart_idx']}番 / 棒グラフスライド: {tpl_diag['bar_chart_idx']}番")
 
-                if tpl_diag['line_chart_idx'] is None and tpl_diag['bar_chart_idx'] is None:
-                    st.warning("⚠️ アップロードされたテンプレート内にグラフオブジェクトが検出されませんでした。GitHubのdevブランチに『グラフを追加した最新テンプレート』が上書きされているかご確認ください。")
+                if tpl_slide_count <= 10 and tpl_diag['line_chart_idx'] is None and tpl_diag['bar_chart_idx'] is None:
+                    st.error("❌ GitHub上のテンプレートが10枚（旧ファイル）です。Macでグラフを追加した最新テンプレートをGitHub（devブランチ）に上書きアップロードしてください。")
 
                 client = genai.Client(api_key=api_key)
 
@@ -504,11 +498,21 @@ if st.button("✨資料を生成する✨"):
 
                     target_template_idx = 2
                     
-                    if (has_values or is_chart_keyword or "line" in layout_type or "bar" in layout_type or "chart" in layout_type) and (tpl_diag["line_chart_idx"] is not None or tpl_diag["bar_chart_idx"] is not None):
+                    if has_values or is_chart_keyword or "line" in layout_type or "bar" in layout_type or "chart" in layout_type:
                         if "bar" in layout_type or "棒" in clean_ch_title:
-                            target_template_idx = tpl_diag["bar_chart_idx"] if tpl_diag["bar_chart_idx"] is not None else tpl_diag["line_chart_idx"]
+                            if tpl_diag["bar_chart_idx"] is not None:
+                                target_template_idx = tpl_diag["bar_chart_idx"]
+                            elif tpl_slide_count >= 11:
+                                target_template_idx = tpl_slide_count - 2
+                            else:
+                                target_template_idx = 2
                         else:
-                            target_template_idx = tpl_diag["line_chart_idx"] if tpl_diag["line_chart_idx"] is not None else tpl_diag["bar_chart_idx"]
+                            if tpl_diag["line_chart_idx"] is not None:
+                                target_template_idx = tpl_diag["line_chart_idx"]
+                            elif tpl_slide_count >= 11:
+                                target_template_idx = tpl_slide_count - 1
+                            else:
+                                target_template_idx = 2
                     elif layout_type == "checklist" or "確認" in clean_ch_title or "チェック" in clean_ch_title:
                         target_template_idx = 9 if tpl_slide_count > 9 else 5
                     elif layout_type == "step" or "フロー" in clean_ch_title or "流れ" in clean_ch_title or "手順" in clean_ch_title or "アクション" in clean_ch_title:
@@ -585,14 +589,18 @@ if st.button("✨資料を生成する✨"):
                         assigned_files=assigned_files, captions=captions
                     )
 
-                    # グラフデータの動的更新（エラー安全ガード付き）
+                    # グラフデータの動的更新（メイリオフォント強制設定付き）
                     if chart_info and chart_info.get("values"):
                         for shape in ch_slide.shapes:
                             if shape.has_chart:
                                 try:
                                     chart = shape.chart
+                                    
+                                    # タイトル更新 ＆ メイリオ化
                                     if chart_info.get("title") and chart.has_title:
                                         chart.chart_title.text_frame.text = str(chart_info.get("title"))
+                                        for p in chart.chart_title.text_frame.paragraphs:
+                                            p.font.name = "メイリオ"
                                     
                                     categories = chart_info.get("categories", ["7月", "8月", "9月", "10月"])
                                     series_name = str(chart_info.get("series_name", "実績"))
@@ -615,8 +623,28 @@ if st.button("✨資料を生成する✨"):
                                         chart_data.categories = categories
                                         chart_data.add_series(series_name, values)
                                         chart.replace_data(chart_data)
-                                except Exception as c_err:
-                                    pass  # グラフ書き換え時にエラーがあってもテキスト生成を継続
+
+                                    # グラフ全体のフォントをメイリオに強制統一
+                                    try:
+                                        if hasattr(chart, 'category_axis') and chart.category_axis:
+                                            chart.category_axis.tick_labels.font.name = "メイリオ"
+                                    except Exception:
+                                        pass
+
+                                    try:
+                                        if hasattr(chart, 'value_axis') and chart.value_axis:
+                                            chart.value_axis.tick_labels.font.name = "メイリオ"
+                                    except Exception:
+                                        pass
+
+                                    try:
+                                        if chart.has_legend and chart.legend:
+                                            chart.legend.font.name = "メイリオ"
+                                    except Exception:
+                                        pass
+
+                                except Exception:
+                                    pass
                                 break
 
                 # 4. INDEXデータ反映
