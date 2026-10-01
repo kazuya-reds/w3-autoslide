@@ -164,10 +164,8 @@ def inspect_template(template_path):
         for shape in sld.shapes:
             if shape.has_chart:
                 c_type = shape.chart.chart_type
-                # 折れ線グラフ系
                 if c_type in [XL_CHART_TYPE.LINE, XL_CHART_TYPE.LINE_MARKERS, XL_CHART_TYPE.LINE_STACKED] or "LINE" in str(c_type):
                     info["line_chart_idx"] = idx
-                # 棒グラフ系
                 elif c_type in [XL_CHART_TYPE.COLUMN_CLUSTERED, XL_CHART_TYPE.BAR_CLUSTERED] or "BAR" in str(c_type) or "COLUMN" in str(c_type):
                     info["bar_chart_idx"] = idx
                 else:
@@ -256,7 +254,7 @@ def process_paragraph_runs(p, replace_map, chapter_num=None, chapter_title=None)
 
 
 # ==========================================
-# 3. スライド要素処理（動的・画像・コネクタ線精密判別）
+# 3. スライド要素処理
 # ==========================================
 def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=None, assigned_files=None, captions=None):
     shapes_to_remove = []
@@ -275,7 +273,6 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
         sname_upper = shape.name.upper()
         raw_text = shape.text_frame.text if shape.has_text_frame else ""
 
-        # 1. 注意文・補足文がメモに無い場合のみ削除
         if not has_notice:
             if "CAUTION" in sname_upper or "SUPPLEMENT" in sname_upper or "補足" in sname_upper or "注意" in sname_upper:
                 shapes_to_remove.append(shape)
@@ -289,19 +286,16 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
                     shapes_to_remove.append(shape)
                     continue
 
-        # 2. 補助項目にデータが無い場合のみ削除
         if not has_sub_item and shape.has_text_frame:
             if "[[補助項目]]" in raw_text or "[[補助項目の本文]]" in raw_text:
                 shapes_to_remove.append(shape)
                 continue
 
-        # 3. 本文がメモに無い場合の消去
         if not has_body and shape.has_text_frame:
             if "[[本文]]" in raw_text:
                 shapes_to_remove.append(shape)
                 continue
 
-        # 4. 画像枠処理
         if shape.has_text_frame and ("[[画像1]]" in shape.text_frame.text or "[[画像2]]" in shape.text_frame.text):
             tf_text = shape.text_frame.text
             target_idx = 0 if "[[画像1]]" in tf_text else 1
@@ -327,7 +321,6 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
             shapes_to_remove.append(shape)
             continue
 
-        # 5. テキストボックス処理
         if shape.has_text_frame:
             tf = shape.text_frame
 
@@ -355,13 +348,11 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
 
                 process_paragraph_runs(p, replace_map, chapter_num, chapter_title)
 
-        # 6. 表（テーブル）処理
         if shape.has_table:
             for cell in shape.table.iter_cells():
                 for p in cell.text_frame.paragraphs:
                     process_paragraph_runs(p, replace_map)
 
-    # 不要図形の物理除去
     for shp in shapes_to_remove:
         try:
             sp = shp._element
@@ -371,7 +362,7 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
 
 
 # ==========================================
-# 4. メイン処理（完全汎用クローン生成）
+# 4. メイン処理
 # ==========================================
 if st.button("✨資料を生成する✨"):
     if not api_key:
@@ -382,7 +373,6 @@ if st.button("✨資料を生成する✨"):
         status_box = st.empty()
         with st.spinner("AIがメモを解析し、資料を構築中..."):
             try:
-                # テンプレートファイルの検出
                 current_dir = os.path.dirname(os.path.abspath(__file__))
                 template_path = os.path.join(current_dir, '資料作成テンプレート_A4横.pptx')
 
@@ -401,12 +391,10 @@ if st.button("✨資料を生成する✨"):
                         else:
                             raise FileNotFoundError(f"テンプレートファイルが見つかりません。")
 
-                # テンプレート自動診断
                 tpl_diag = inspect_template(template_path)
                 prs = Presentation(template_path)
                 tpl_slide_count = len(prs.slides)
 
-                # 画面上にテンプレート診断情報を表示（確認用）
                 st.caption(f"ℹ️ テンプレート確認: 全{tpl_slide_count}枚 / 折れ線スライド: {tpl_diag['line_chart_idx']}番 / 棒グラフスライド: {tpl_diag['bar_chart_idx']}番")
 
                 client = genai.Client(api_key=api_key)
@@ -418,7 +406,6 @@ if st.button("✨資料を生成する✨"):
                     "image_contexts": image_contexts
                 }
 
-                # 高精度構造解析プロンプト
                 single_pass_prompt = f"""
                 あなたはプレゼン資料作成のプロコンサルタントです。
                 以下の入力を直接分析し、メモの情報を一切落とさずにプレゼンスライド用のJSONを作成してください。
@@ -433,24 +420,19 @@ if st.button("✨資料を生成する✨"):
                    - "bar_chart": 【最優先】項目別比較、実績数値の比較、カテゴリ別実績がある場合
                    - "text": 概要・課題・特徴・メリット・期待効果・要因分析など
                    - "step": 導入手順・運用フロー・タイムライン・実行ステップ（最大4ステップ）
-                   - "checklist": 確認事項・必要書類・チェックリストなど（※推移や分析には使わないこと）
+                   - "checklist": 確認事項・必要書類・チェックリストなど
                    - "table": 料金プランや機能比較などのテキスト表
                 3. 情報の分配ルール:
                    - "main_item": キャッチコピーまたは主要項目（15文字以内）
                    - "body": メインの概要文章
-                   - "sub_title": 補助項目のタイトル（例: "主な課題点", "提供する主なコンテンツ", "対象別の具体的な効果" など）
+                   - "sub_title": 補助項目のタイトル
                    - "sub_body": 補助項目の本文
-                   - "notice": 注意事項（※記号の文など）。無ければ空文字 ""
+                   - "notice": 注意事項。無ければ空文字 ""
                 4. "line_chart" または "bar_chart" の場合:
-                   - "chart_info": 必ずメモから数値を抽出し、数値配列（values: 数字のみ、例: [100, 150, 130, 200]）とカテゴリ配列（categories: 例: ["7月", "8月", "9月", "10月"]）を作成してください。
-                5. "step" の場合:
-                   - "step_descs": [ "ステップ1の説明", "ステップ2の説明", "ステップ3の説明", "ステップ4の説明" ] の配列形式。
-                6. "table" の場合:
-                   - "column_count": 2, 3, 4 のいずれか
-                   - "table": {{ "headers": ["列見出し1", "列見出し2", ...], "rows": [ ["行1列1", "行1列2", ...], ["行2列1", ...] ] }} の形式。
-                7. 【重要ルール】
+                   - "chart_info": 必ずメモから数値を抽出し、数値配列（values: 数字のみ）とカテゴリ配列（categories）を作成してください。
+                5. 【重要ルール】
                    - "body" や "sub_body" などの本文項目は絶対に空欄にせず、文字を出力してください。
-                   - メモに売上や件数などの推移・実績が含まれている場合は、必ず1スライド以上 "line_chart" または "bar_chart" を使用してください。
+                   - メモに売上や件数などの推移・実績が含まれている場合は、第1章など該当するスライドで必ず "line_chart" または "bar_chart" を使用してください。
 
                 【出力形式】
                 純粋なJSONのみを出力してください。
@@ -490,7 +472,7 @@ if st.button("✨資料を生成する✨"):
 
                 new_slides = []
 
-                # --- 1. 表紙スライドの複製・生成 ---
+                # 1. 表紙
                 cover_slide = duplicate_slide_in_prs(prs, 0)
                 cover_map = {
                     "[[資料タイトル]]": doc_title,
@@ -501,11 +483,11 @@ if st.button("✨資料を生成する✨"):
                 process_slide_shapes(cover_slide, cover_map)
                 new_slides.append(cover_slide)
 
-                # --- 2. INDEX（目次）スライドの複製・生成 ---
+                # 2. INDEX
                 index_slide = duplicate_slide_in_prs(prs, 1)
                 new_slides.append(index_slide)
 
-                # --- 3. 各章スライドの選定・複製・データ流し込み ---
+                # 3. 章スライド
                 index_map = {}
                 chapter_slides = []
 
@@ -526,13 +508,26 @@ if st.button("✨資料を生成する✨"):
                     assigned_files = [uploaded_files[i] for i in img_indices if uploaded_files and i < len(uploaded_files)]
                     captions = ch.get("image_captions", [])
 
-                    # テンプレート上の複製元インデックス判定（自動検知）
+                    # ★二重安全装置付きレイアウト選定★
                     target_template_idx = 2
                     
-                    if ("line" in layout_type or "折れ線" in clean_ch_title or "推移" in clean_ch_title) and tpl_diag["line_chart_idx"] is not None:
-                        target_template_idx = tpl_diag["line_chart_idx"]
-                    elif ("bar" in layout_type or "chart" in layout_type or "グラフ" in clean_ch_title) and tpl_diag["bar_chart_idx"] is not None:
-                        target_template_idx = tpl_diag["bar_chart_idx"]
+                    is_chart = ("line" in layout_type or "bar" in layout_type or "chart" in layout_type or "推移" in clean_ch_title or "グラフ" in clean_ch_title or "売上" in clean_ch_title)
+                    
+                    if is_chart:
+                        if "line" in layout_type or "折れ線" in clean_ch_title or "推移" in clean_ch_title:
+                            if tpl_diag["line_chart_idx"] is not None:
+                                target_template_idx = tpl_diag["line_chart_idx"]
+                            elif tpl_slide_count >= 11:
+                                target_template_idx = tpl_slide_count - 1
+                            elif tpl_slide_count >= 10:
+                                target_template_idx = tpl_slide_count - 1
+                        else:
+                            if tpl_diag["bar_chart_idx"] is not None:
+                                target_template_idx = tpl_diag["bar_chart_idx"]
+                            elif tpl_slide_count >= 11:
+                                target_template_idx = tpl_slide_count - 2
+                            elif tpl_slide_count >= 10:
+                                target_template_idx = tpl_slide_count - 1
                     elif layout_type == "checklist" or "確認" in clean_ch_title or "チェック" in clean_ch_title:
                         target_template_idx = 9 if tpl_slide_count > 9 else 5
                     elif layout_type == "step" or "フロー" in clean_ch_title or "流れ" in clean_ch_title or "手順" in clean_ch_title or "アクション" in clean_ch_title:
@@ -552,7 +547,7 @@ if st.button("✨資料を生成する✨"):
                     ch_slide = duplicate_slide_in_prs(prs, target_template_idx)
                     chapter_slides.append(ch_slide)
 
-                    # 置換辞書の組み立て
+                    # 置換辞書
                     ch_map = {}
                     ch_map["[[主要項目]]"] = ch.get("main_item", "")
                     ch_map["[[本文]]"] = ch.get("body", "")
@@ -563,13 +558,13 @@ if st.button("✨資料を生成する✨"):
                     ch_map["[[補足文]]"] = notice_val
                     ch_map["[[注意文]]"] = notice_val
 
-                    # STEPスライド
+                    # STEP
                     step_descs = ch.get("step_descs", [])
                     for idx in range(1, 5):
                         desc = step_descs[idx - 1] if len(step_descs) >= idx else ""
                         ch_map[f"[[STEP{idx}の説明]]"] = desc
 
-                    # テーブルスライド
+                    # テーブル
                     tbl = ch.get("table", {})
                     if isinstance(tbl, dict):
                         headers = tbl.get("headers", [])
@@ -641,7 +636,7 @@ if st.button("✨資料を生成する✨"):
                                     chart.replace_data(chart_data)
                                 break
 
-                # --- 4. INDEX（目次）スライドへデータ反映 ---
+                # 4. INDEXデータ反映
                 for k in range(len(chapters) + 1, 7):
                     index_map[f"[[章{k}タイトル]]"] = ""
                     index_map[f"P[[章{k}ページ]]"] = ""
@@ -656,14 +651,14 @@ if st.button("✨資料を生成する✨"):
 
                 new_slides.extend(chapter_slides)
 
-                # --- 5. 元のテンプレート用スライドの物理削除 ---
+                # 5. 元テンプレートスライド削除
                 sldIdLst = prs.slides._sldIdLst
                 for i in range(tpl_slide_count - 1, -1, -1):
                     elem = sldIdLst[i]
                     prs.part.drop_rel(elem.rId)
                     sldIdLst.remove(elem)
 
-                # --- 6. 残存タグ消去 ＆ ページ番号確実付与 ---
+                # 6. 残存タグ消去＆ページ番号
                 for s_i, sld in enumerate(prs.slides):
                     for shp in sld.shapes:
                         if shp.has_text_frame:
@@ -674,7 +669,7 @@ if st.button("✨資料を生成する✨"):
                     if s_i > 0:
                         ensure_page_number(sld, s_i)
 
-                # --- 7. ファイル名の自動生成 ---
+                # 7. 保存
                 safe_filename = re.sub(r'[\\/:*?"<>|]', '_', doc_title.strip())
                 if not safe_filename:
                     safe_filename = "提案書"
