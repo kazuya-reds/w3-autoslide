@@ -5,7 +5,6 @@ from pptx.util import Pt
 from pptx.chart.data import CategoryChartData
 from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
 from pptx.enum.chart import XL_CHART_TYPE
-from pptx.opc.packuri import PackURI
 from PIL import Image
 import json
 import datetime
@@ -77,16 +76,22 @@ def clean_notice_text(text):
     return re.sub(r'^(?:[※\*\:\s]|注意[：:]|注[：:])+', '', str(text).strip())
 
 # ==========================================
-# テンプレート・スライド物理複製クローンエンジン
+# テンプレート・スライド物理複製クローンエンジン（安全・安定版）
 # ==========================================
 def duplicate_slide_in_prs(prs, src_idx):
+    """
+    テンプレートの指定インデックスのスライドを複製（クローン）して
+    プレゼンテーションの末尾に安全に追加する関数
+    """
     src_slide = prs.slides[src_idx]
     new_slide = prs.slides.add_slide(src_slide.slide_layout)
     
+    # 自動追加された不要なデフォルト枠をクリア
     for shp in list(new_slide.shapes):
         sp = shp._element
         sp.getparent().remove(sp)
         
+    # ソーススライドの全シェイプ（図形・テキスト・画像・表・グラフ）を複製
     for shape in src_slide.shapes:
         new_el = copy.deepcopy(shape._element)
         
@@ -96,29 +101,7 @@ def duplicate_slide_in_prs(prs, src_idx):
                 if rId in src_slide.part.rels:
                     rel = src_slide.part.rels[rId]
                     target_part = rel.target_part
-                    
-                    if "chart" in rel.reltype.lower():
-                        uniq_ts = time.time_ns()
-                        new_chart_part = prs.part.package.part_factory(
-                            PackURI(f"/ppt/charts/chart_auto_{uniq_ts}.xml"),
-                            target_part.content_type,
-                            rel.reltype,
-                            target_part.blob
-                        )
-                        for c_rId, c_rel in list(target_part.rels.items()):
-                            c_target = c_rel.target_part
-                            new_excel = prs.part.package.part_factory(
-                                PackURI(f"/ppt/embeddings/excel_auto_{uniq_ts}.xlsx"),
-                                c_target.content_type,
-                                c_rel.reltype,
-                                c_target.blob
-                            )
-                            new_chart_part.relate_to(new_excel, c_rel.reltype)
-                        
-                        new_rId = new_slide.part.relate_to(new_chart_part, rel.reltype)
-                    else:
-                        new_rId = new_slide.part.relate_to(target_part, rel.reltype)
-                        
+                    new_rId = new_slide.part.relate_to(target_part, rel.reltype)
                     for elem in new_el.iter():
                         for k, v in list(elem.attrib.items()):
                             if v == rId:
@@ -130,7 +113,7 @@ def duplicate_slide_in_prs(prs, src_idx):
     return new_slide
 
 # ==========================================
-# ページ番号配置
+# ページ番号確実配置エンジン
 # ==========================================
 def ensure_page_number(slide, page_num):
     found_page_shape = None
@@ -410,7 +393,6 @@ if st.button("✨資料を生成する✨"):
 
                 st.caption(f"ℹ️ テンプレート確認: 全{tpl_slide_count}枚 / 折れ線スライド: {tpl_diag['line_chart_idx']}番 / 棒グラフスライド: {tpl_diag['bar_chart_idx']}番")
 
-                # グラフスライド存在警告チェック
                 if tpl_diag['line_chart_idx'] is None and tpl_diag['bar_chart_idx'] is None:
                     st.warning("⚠️ アップロードされたテンプレート内にグラフオブジェクトが検出されませんでした。GitHubのdevブランチに『グラフを追加した最新テンプレート』が上書きされているかご確認ください。")
 
@@ -522,19 +504,11 @@ if st.button("✨資料を生成する✨"):
 
                     target_template_idx = 2
                     
-                    if has_values or is_chart_keyword or "line" in layout_type or "bar" in layout_type or "chart" in layout_type:
+                    if (has_values or is_chart_keyword or "line" in layout_type or "bar" in layout_type or "chart" in layout_type) and (tpl_diag["line_chart_idx"] is not None or tpl_diag["bar_chart_idx"] is not None):
                         if "bar" in layout_type or "棒" in clean_ch_title:
-                            if tpl_diag["bar_chart_idx"] is not None:
-                                target_template_idx = tpl_diag["bar_chart_idx"]
-                            else:
-                                target_template_idx = 2
+                            target_template_idx = tpl_diag["bar_chart_idx"] if tpl_diag["bar_chart_idx"] is not None else tpl_diag["line_chart_idx"]
                         else:
-                            if tpl_diag["line_chart_idx"] is not None:
-                                target_template_idx = tpl_diag["line_chart_idx"]
-                            elif tpl_diag["bar_chart_idx"] is not None:
-                                target_template_idx = tpl_diag["bar_chart_idx"]
-                            else:
-                                target_template_idx = 2
+                            target_template_idx = tpl_diag["line_chart_idx"] if tpl_diag["line_chart_idx"] is not None else tpl_diag["bar_chart_idx"]
                     elif layout_type == "checklist" or "確認" in clean_ch_title or "チェック" in clean_ch_title:
                         target_template_idx = 9 if tpl_slide_count > 9 else 5
                     elif layout_type == "step" or "フロー" in clean_ch_title or "流れ" in clean_ch_title or "手順" in clean_ch_title or "アクション" in clean_ch_title:
@@ -611,43 +585,39 @@ if st.button("✨資料を生成する✨"):
                         assigned_files=assigned_files, captions=captions
                     )
 
-                    # グラフデータの動的更新
-                    if not chart_info or not chart_info.get("values"):
-                        chart_info = {
-                            "title": "月別売上推移（万円）",
-                            "categories": ["7月", "8月", "9月", "10月"],
-                            "series_name": "売上高",
-                            "values": [100, 150, 130, 200]
-                        }
-
-                    for shape in ch_slide.shapes:
-                        if shape.has_chart:
-                            chart = shape.chart
-                            if chart_info.get("title") and chart.has_title:
-                                chart.chart_title.text_frame.text = str(chart_info.get("title"))
-                            
-                            categories = chart_info.get("categories", ["7月", "8月", "9月", "10月"])
-                            series_name = str(chart_info.get("series_name", "実績"))
-                            raw_values = chart_info.get("values", [100, 150, 130, 200])
-                            
-                            values = []
-                            for v in raw_values:
+                    # グラフデータの動的更新（エラー安全ガード付き）
+                    if chart_info and chart_info.get("values"):
+                        for shape in ch_slide.shapes:
+                            if shape.has_chart:
                                 try:
-                                    num_str = re.sub(r'[^\d\.]', '', str(v))
-                                    values.append(float(num_str) if num_str else 0.0)
-                                except Exception:
-                                    values.append(0.0)
-                            
-                            if categories and values:
-                                min_len = min(len(categories), len(values))
-                                categories = categories[:min_len]
-                                values = values[:min_len]
-                                
-                                chart_data = CategoryChartData()
-                                chart_data.categories = categories
-                                chart_data.add_series(series_name, values)
-                                chart.replace_data(chart_data)
-                            break
+                                    chart = shape.chart
+                                    if chart_info.get("title") and chart.has_title:
+                                        chart.chart_title.text_frame.text = str(chart_info.get("title"))
+                                    
+                                    categories = chart_info.get("categories", ["7月", "8月", "9月", "10月"])
+                                    series_name = str(chart_info.get("series_name", "実績"))
+                                    raw_values = chart_info.get("values", [100, 150, 130, 200])
+                                    
+                                    values = []
+                                    for v in raw_values:
+                                        try:
+                                            num_str = re.sub(r'[^\d\.]', '', str(v))
+                                            values.append(float(num_str) if num_str else 0.0)
+                                        except Exception:
+                                            values.append(0.0)
+                                    
+                                    if categories and values:
+                                        min_len = min(len(categories), len(values))
+                                        categories = categories[:min_len]
+                                        values = values[:min_len]
+                                        
+                                        chart_data = CategoryChartData()
+                                        chart_data.categories = categories
+                                        chart_data.add_series(series_name, values)
+                                        chart.replace_data(chart_data)
+                                except Exception as c_err:
+                                    pass  # グラフ書き換え時にエラーがあってもテキスト生成を継続
+                                break
 
                 # 4. INDEXデータ反映
                 for k in range(len(chapters) + 1, 7):
