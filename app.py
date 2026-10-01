@@ -2,6 +2,7 @@ import streamlit as st
 from google import genai
 from pptx import Presentation
 from pptx.util import Pt
+from pptx.chart.data import CategoryChartData
 from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
 from PIL import Image
 import json
@@ -79,7 +80,7 @@ def clean_notice_text(text):
 def duplicate_slide_in_prs(prs, src_idx):
     """
     テンプレートの指定インデックスのスライドを複製（クローン）して
-    プレゼンテーションの末尾に安全に追加する関数
+    プレゼンテーションの末尾に安全に追加する関数（画像・グラフの参照関係も完全維持）
     """
     src_slide = prs.slides[src_idx]
     new_slide = prs.slides.add_slide(src_slide.slide_layout)
@@ -89,21 +90,24 @@ def duplicate_slide_in_prs(prs, src_idx):
         sp = shp._element
         sp.getparent().remove(sp)
         
-    # ソーススライドの全シェイプ（図形・テキスト・画像・表）を複製
+    # ソーススライドの全シェイプ（図形・テキスト・画像・表・グラフ）を複製
     for shape in src_slide.shapes:
         new_el = copy.deepcopy(shape._element)
-        if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
-            try:
-                rId = shape._element.xpath('.//@r:embed')[0]
+        
+        # 画像(r:embed)やグラフ(r:id)などの内部リレーションを複製先スライドに確実に引き継ぐ
+        try:
+            r_ids = shape._element.xpath('.//@r:embed | .//@r:id')
+            for rId in r_ids:
                 if rId in src_slide.part.rels:
                     rel = src_slide.part.rels[rId]
                     new_rId = new_slide.part.relate_to(rel.target_part, rel.reltype)
                     for elem in new_el.iter():
                         for k, v in list(elem.attrib.items()):
-                            if k.endswith('embed'):
+                            if v == rId:
                                 elem.attrib[k] = new_rId
-            except Exception:
-                pass
+        except Exception:
+            pass
+
         new_slide.shapes._spTree.append(new_el)
     return new_slide
 
@@ -153,9 +157,9 @@ with st.sidebar:
 col1, col2 = st.columns(2)
 with col1:
     client_name = st.text_input("提案先（顧客名）", "例）役員会 各位")
-    doc_title = st.text_input("資料タイトル", "例）経費精算システム導入による業務効率化提案")
+    doc_title = st.text_input("資料タイトル", "例）売上推移と今後の成長戦略")
 with col2:
-    sender_name = st.text_input("作成者・部署など", "例）経理部・DX推進チーム")
+    sender_name = st.text_input("作成者・部署など", "例）営業部")
     uploaded_files = st.file_uploader("挿入画像（任意・複数可）", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
 
 image_contexts = []
@@ -168,23 +172,18 @@ if uploaded_files:
             image_contexts.append({"index": i, "filename": f.name, "description": desc})
 
 raw_memo = st.text_area("資料の内容メモ", 
-"""例）
-経費精算の件、現場から不満多すぎるからどうにかしたい。
-スマホで領収書パシャって撮ったら終わるようにできないかな？
-今、紙で提出してもらって経理で1枚ずつチェックしてるけど、月末マジで地獄。ミスも多いし。
+"""直近4ヶ月の売上推移について報告します。
+7月は100万、8月は150万、9月は130万、10月は200万と堅調に推移しています。
 
-やりたいこと・アイデア：
-・経費精算システムの導入（クラウドのやつ）
-・OCR機能で領収書を自動読み取り
-・上長承認もスマホでポチッとできるようにしたい
+売上推移の要因：
+・8月および10月の増収は新規施策の奏功
+・9月の一時的な落ち込みは季節要因と期ずれ
 
-期待できる効果：
-経理の確認作業が月15時間くらい減るはず。
-社員も外出先から申請できるから「提出遅れ」が無くなる。
-
-費用は月数万円くらいなら出せる？
-来月にはツール決めて、再来月から一部部署でテスト運用したい感じ。
-予算感とスケジュールまとめた提案スライド作って上に通したい。""", height=400)
+今後のアクション：
+1. 顧客購買データの詳細分析
+2. 高単価ターゲット層へのアプローチ強化
+3. 新プロモーションの実施
+4. 月商200万円の継続的維持""", height=400)
 
 
 # ==========================================
@@ -247,7 +246,7 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
         sname_upper = shape.name.upper()
         raw_text = shape.text_frame.text if shape.has_text_frame else ""
 
-        # 1. 注意文・補足文がメモに無い場合のみ、注意アイコン画像や注意専用テキスト枠を削除
+        # 1. 注意文・補足文がメモに無い場合のみ削除
         if not has_notice:
             if "CAUTION" in sname_upper or "SUPPLEMENT" in sname_upper or "補足" in sname_upper or "注意" in sname_upper:
                 shapes_to_remove.append(shape)
@@ -261,7 +260,7 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
                     shapes_to_remove.append(shape)
                     continue
 
-        # 2. 補助項目（sub_title / sub_body）にデータが無い場合のみ、補助項目枠を削除
+        # 2. 補助項目にデータが無い場合のみ削除
         if not has_sub_item and shape.has_text_frame:
             if "[[補助項目]]" in raw_text or "[[補助項目の本文]]" in raw_text:
                 shapes_to_remove.append(shape)
@@ -273,7 +272,7 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
                 shapes_to_remove.append(shape)
                 continue
 
-        # 4. 画像枠処理（アップロードされた画像のみ差し替え）
+        # 4. 画像枠処理
         if shape.has_text_frame and ("[[画像1]]" in shape.text_frame.text or "[[画像2]]" in shape.text_frame.text):
             tf_text = shape.text_frame.text
             target_idx = 0 if "[[画像1]]" in tf_text else 1
@@ -363,7 +362,7 @@ if st.button("✨資料を生成する✨"):
                     "image_contexts": image_contexts
                 }
 
-                # 高精度構造解析プロンプト（完全ドメインフリー）
+                # 高精度構造解析プロンプト（全レイアウト完全サポート版）
                 single_pass_prompt = f"""
                 あなたはプレゼン資料作成のプロコンサルタントです。
                 以下の入力を直接分析し、メモの情報を一切落とさずにプレゼンスライド用のJSONを作成してください。
@@ -374,24 +373,28 @@ if st.button("✨資料を生成する✨"):
                 【レイアウト＆情報抽出ルール】
                 1. メモの主要項目を整理し、プレゼンに最適な3〜7個の章（chapters）にまとめてください。
                 2. 各章のコンテンツに合わせて、最適な "layout_type" を以下から選定してください:
-                   - "text": 概要・課題・特徴・メリット・期待効果など
-                   - "table": 料金プラン・比較表・一覧データなど
-                   - "step": 導入手順・運用フロー・タイムラインなど（最大4ステップ）
-                   - "checklist": 確認事項・必要書類・チェックリストなど
+                   - "line_chart": 【最優先】月別推移、売上推移、時系列トレンドなどの数値変化がある場合
+                   - "bar_chart": 【最優先】項目別比較、実績数値の比較、カテゴリ別実績がある場合
+                   - "checklist": 確認事項・必要書類・体制確立の要点・チェックリストなど
+                   - "step": 導入手順・運用フロー・タイムライン・実行ステップ（最大4ステップ）
+                   - "text": 概要・課題・特徴・メリット・期待効果・要因分析など
+                   - "table": 料金プランや機能比較などのテキスト表（※数値推移の時は絶対にtableではなくchartを選ぶこと）
                 3. 情報の分配ルール:
                    - "main_item": キャッチコピーまたは主要項目（15文字以内）
                    - "body": メインの概要文章
-                   - "sub_title": 補助項目のタイトル（例: "主な課題点", "提供する主なコンテンツ", "対象別の具体的な効果", "今後の展開領域" など）。メモに箇条書きや複数カテゴリがある場合は必ずここにタイトルを入れてください。
-                   - "sub_body": 補助項目の本文（例: 箇条書きリスト、店舗側・新人側の詳細効果など）
+                   - "sub_title": 補助項目のタイトル（例: "主な課題点", "体制確立の要点" など）
+                   - "sub_body": 補助項目の本文
                    - "notice": 注意事項（※記号の文など）。無ければ空文字 ""
-                4. "step" の場合:
-                   - "step_descs": [ "ステップ1の説明", "ステップ2の説明", "ステップ3の説明", "ステップ4の説明" ] の配列形式で格納してください。
-                5. "table" の場合:
-                   - "column_count": 2, 3, 4 のいずれか
-                   - "table": {{ "headers": ["列見出し1", "列見出し2", ...], "rows": [ ["行1列1", "行1列2", ...], ["行2列1", ...] ] }} の形式で格納してください。
-                6. 【重要ルール】
+                4. "checklist" の場合:
+                   - "intro": チェックリスト前の導入文章（例: "目標達成に向けた重要確認項目は以下の通りです" など）
+                   - "items": ["確認項目1", "確認項目2", "確認項目3", "確認項目4"]（2〜6個の具体的なチェック項目配列）
+                   - "guide": チェック後の案内文章（例: "全項目の確認完了後、プロジェクトを推進します" など）
+                5. "line_chart" または "bar_chart" の場合:
+                   - "chart_info": 必ずメモから数値を抽出し、数値配列（values: 数字のみ）とカテゴリ配列（categories）を作成してください。
+                6. "step" の場合:
+                   - "step_descs": [ "ステップ1の説明", "ステップ2の説明", "ステップ3の説明", "ステップ4の説明" ] の配列形式。
+                7. 【重要ルール】
                    - "body" や "sub_body" などの本文項目は絶対に空欄にせず、文字を出力してください。
-                   - 「提案内容」などのスライドでは、入力データのメモにある具体的なアイデア（OCR機能など）を漏れなく抽出し、必ず文章や箇条書きで反映させてください。
 
                 【出力形式】
                 純粋なJSONのみを出力してください。
@@ -399,16 +402,25 @@ if st.button("✨資料を生成する✨"):
                   "chapters": [
                     {{
                       "chapter_title": "章タイトル",
-                      "layout_type": "text",
+                      "layout_type": "text", 
                       "main_item": "主要見出し（15文字以内）",
-                      "body": "本文テキスト（※絶対に空欄にせず、入力データから抽出した内容を必ず2〜4点の箇条書き等で具体的に記述すること。情報が足りない場合はビジネスの文脈から推測してでも必ず出力すること）",
+                      "body": "本文テキスト",
                       "sub_title": "補助項目タイトル",
                       "sub_body": "補助項目本文",
                       "notice": "",
+                      "intro": "チェックリスト導入文",
+                      "items": ["項目1", "項目2", "項目3"],
+                      "guide": "チェック後の案内文",
                       "step_descs": [],
                       "table": {{ "headers": [], "rows": [] }},
                       "assigned_image_indices": [],
-                      "image_captions": []
+                      "image_captions": [],
+                      "chart_info": {{
+                        "title": "グラフのタイトル",
+                        "categories": ["7月", "8月", "9月", "10月"],
+                        "series_name": "売上高",
+                        "values": [100, 150, 130, 200]
+                      }}
                     }}
                   ]
                 }}
@@ -423,11 +435,9 @@ if st.button("✨資料を生成する✨"):
                 import os
                 import unicodedata
 
-                # テンプレートファイルを自動探索（文字コードのズレを完全吸収）
                 current_dir = os.path.dirname(os.path.abspath(__file__))
                 template_path = os.path.join(current_dir, '資料作成テンプレート_A4横.pptx')
 
-                # 直接見つからない場合は、ディレクトリ内の.pptxファイルを自動検出
                 if not os.path.exists(template_path):
                     all_files = os.listdir(current_dir)
                     target_norm = unicodedata.normalize('NFC', '資料作成テンプレート_A4横.pptx')
@@ -437,7 +447,6 @@ if st.button("✨資料を生成する✨"):
                                 template_path = os.path.join(current_dir, f)
                                 break
                     else:
-                        # 万が一名前が違っても、フォルダ内の唯一のpptxファイルを採用
                         pptx_list = [f for f in all_files if f.endswith('.pptx')]
                         if pptx_list:
                             template_path = os.path.join(current_dir, pptx_list[0])
@@ -450,10 +459,9 @@ if st.button("✨資料を生成する✨"):
                 chapters = final_data.get("chapters", [])
                 today_str = datetime.date.today().strftime("%Y/%m/%d")
 
-                # 生成スライドの並び順管理
                 new_slides = []
 
-                # --- 1. 表紙スライドの複製・生成 (Template Index 0) ---
+                # --- 1. 表紙スライドの複製・生成 ---
                 cover_slide = duplicate_slide_in_prs(prs, 0)
                 cover_map = {
                     "[[資料タイトル]]": doc_title,
@@ -464,7 +472,7 @@ if st.button("✨資料を生成する✨"):
                 process_slide_shapes(cover_slide, cover_map)
                 new_slides.append(cover_slide)
 
-                # --- 2. INDEX（目次）スライドの複製・生成 (★2ページ目に配置) ---
+                # --- 2. INDEX（目次）スライドの複製・生成 ---
                 index_slide = duplicate_slide_in_prs(prs, 1)
                 new_slides.append(index_slide)
 
@@ -473,8 +481,8 @@ if st.button("✨資料を生成する✨"):
                 chapter_slides = []
 
                 for ch_idx, ch in enumerate(chapters):
-                    ch_num_str = f"{ch_idx + 1:02d}"  # 01, 02, 03...
-                    ch_page_num = ch_idx + 2          # INDEX=1 のため、第1章は P2 スタート
+                    ch_num_str = f"{ch_idx + 1:02d}"
+                    ch_page_num = ch_idx + 2
                     ch_title = ch.get("chapter_title", f"章{ch_idx+1}")
                     clean_ch_title = re.sub(r'^\d+[\.\s_]*', '', str(ch_title)).strip()
 
@@ -491,11 +499,16 @@ if st.button("✨資料を生成する✨"):
 
                     # テンプレート上の複製元インデックス判定
                     target_template_idx = 2
-                    if layout_type == "checklist" or "確認" in clean_ch_title or "チェック" in clean_ch_title:
+                    
+                    if "line" in layout_type or "折れ線" in clean_ch_title or "推移" in clean_ch_title:
+                        target_template_idx = tpl_slide_count - 1 if tpl_slide_count > 2 else 2
+                    elif "bar" in layout_type or "chart" in layout_type or "グラフ" in clean_ch_title:
+                        target_template_idx = tpl_slide_count - 2 if tpl_slide_count >= 11 else (tpl_slide_count - 1 if tpl_slide_count > 2 else 2)
+                    elif layout_type == "checklist" or "確認" in clean_ch_title or "チェック" in clean_ch_title:
                         target_template_idx = 9 if tpl_slide_count > 9 else 5
                     elif layout_type == "step" or "フロー" in clean_ch_title or "流れ" in clean_ch_title or "手順" in clean_ch_title:
                         target_template_idx = 5 if tpl_slide_count > 5 else 4
-                    elif layout_type == "table" or "プラン" in clean_ch_title or "比較" in clean_ch_title or "料金" in clean_ch_title:
+                    elif layout_type == "table" or "プラン" in clean_ch_title or "料金" in clean_ch_title:
                         tbl_data = ch.get("table", {})
                         cols = ch.get("column_count", len(tbl_data.get("headers", [])))
                         if cols == 4 and tpl_slide_count > 8: target_template_idx = 8
@@ -521,7 +534,7 @@ if st.button("✨資料を生成する✨"):
                     ch_map["[[補足文]]"] = notice_val
                     ch_map["[[注意文]]"] = notice_val
 
-                    # STEPスライド（1〜4）
+                    # STEPスライド
                     step_descs = ch.get("step_descs", [])
                     for idx in range(1, 5):
                         desc = step_descs[idx - 1] if len(step_descs) >= idx else ""
@@ -532,11 +545,9 @@ if st.button("✨資料を生成する✨"):
                     if isinstance(tbl, dict):
                         headers = tbl.get("headers", [])
                         rows = tbl.get("rows", [])
-                        
                         for idx in range(1, 5):
                             h_val = headers[idx - 1] if len(headers) >= idx else tbl.get(f"col{idx}", "")
                             ch_map[f"[[列見出し{idx}]]"] = h_val
-
                         for r_idx in range(1, 5):
                             row_data = rows[r_idx - 1] if len(rows) >= r_idx else []
                             for c_idx in range(1, 5):
@@ -548,18 +559,58 @@ if st.button("✨資料を生成する✨"):
 
                     ch_map["[[表の注記]]"] = notice_val if notice_val else "※詳細につきましてはお気軽にお問い合わせください。"
 
-                    # チェックリスト
-                    items = ch.get("items", ["", "", "", "", "", ""])
-                    ch_map["[[チェックリスト導入文]]"] = ch.get("intro", "")
+                    # チェックリスト（自動補完付き）
+                    items = ch.get("items", [])
+                    if not items:
+                        raw_txt = ch.get("sub_body", "") or ch.get("body", "")
+                        lines = [re.sub(r'^[・\-\*\d\.\s]+', '', l).strip() for l in raw_txt.split('\n') if l.strip()]
+                        items = lines[:6]
+
+                    intro_val = ch.get("intro", "") or ch.get("body", "以下の確認項目を確実に実施してください。")
+                    guide_val = ch.get("guide", "") or "全項目の完了を確認の上、次のフェーズへ進みます。"
+
+                    ch_map["[[チェックリスト導入文]]"] = intro_val
                     for k in range(1, 7):
                         ch_map[f"[[チェック項目{k}]]"] = items[k - 1] if len(items) >= k else ""
-                    ch_map["[[チェック後の案内文]]"] = ch.get("guide", "")
+                    ch_map["[[チェック後の案内文]]"] = guide_val
 
                     process_slide_shapes(
                         ch_slide, ch_map,
                         chapter_num=ch_num_str, chapter_title=clean_ch_title,
                         assigned_files=assigned_files, captions=captions
                     )
+
+                    # グラフデータの動的更新
+                    chart_info = ch.get("chart_info")
+                    if chart_info:
+                        for shape in ch_slide.shapes:
+                            if shape.has_chart:
+                                chart = shape.chart
+                                if chart_info.get("title") and chart.has_title:
+                                    chart.chart_title.text_frame.text = str(chart_info.get("title"))
+                                
+                                categories = chart_info.get("categories", [])
+                                series_name = str(chart_info.get("series_name", "実績"))
+                                raw_values = chart_info.get("values", [])
+                                
+                                values = []
+                                for v in raw_values:
+                                    try:
+                                        num_str = re.sub(r'[^\d\.]', '', str(v))
+                                        values.append(float(num_str) if num_str else 0.0)
+                                    except Exception:
+                                        values.append(0.0)
+                                
+                                if categories and values:
+                                    min_len = min(len(categories), len(values))
+                                    categories = categories[:min_len]
+                                    values = values[:min_len]
+                                    
+                                    chart_data = CategoryChartData()
+                                    chart_data.categories = categories
+                                    chart_data.add_series(series_name, values)
+                                    chart.replace_data(chart_data)
+                                break
 
                 # --- 4. INDEX（目次）スライドへデータ反映 ---
                 for k in range(len(chapters) + 1, 7):
@@ -574,10 +625,9 @@ if st.button("✨資料を生成する✨"):
                             if p.text.strip() in ["P", "P.", "P-"]:
                                 p.text = ""
 
-                # 並び順の確定: [表紙] -> [INDEX] -> [章スライド群...]
                 new_slides.extend(chapter_slides)
 
-                # --- 5. 元のテンプレート用スライド（0〜tpl_slide_count-1）の物理削除 ---
+                # --- 5. 元のテンプレート用スライドの物理削除 ---
                 sldIdLst = prs.slides._sldIdLst
                 for i in range(tpl_slide_count - 1, -1, -1):
                     elem = sldIdLst[i]
@@ -593,9 +643,9 @@ if st.button("✨資料を生成する✨"):
                                     p.text = re.sub(r'\[\[.*?\]\]', '', p.text)
                     
                     if s_i > 0:
-                        ensure_page_number(sld, s_i)  # 表紙=0、INDEX=1, 第1章=2...
+                        ensure_page_number(sld, s_i)
 
-                # --- 7. ファイル名の自動生成（資料タイトル反映） ---
+                # --- 7. ファイル名の自動生成 ---
                 safe_filename = re.sub(r'[\\/:*?"<>|]', '_', doc_title.strip())
                 if not safe_filename:
                     safe_filename = "提案書"
@@ -614,9 +664,7 @@ if st.button("✨資料を生成する✨"):
                     )
             except Exception as e:
                 error_message = str(e)
-                # Gemini APIの混雑や回数制限エラーの場合
                 if "503" in error_message or "UNAVAILABLE" in error_message or "429" in error_message or "RESOURCE_EXHAUSTED" in error_message:
                     st.error("【サーバー混雑中】現在、AIサーバーへのアクセスが集中しています。恐れ入りますが、1〜2分ほど待ってから再度「資料を生成する」ボタンを押してください。")
-                # それ以外のエラーの場合
                 else:
                     st.error(f"エラーが発生しました。時間を置いて再度お試しください。詳細: {e}")
