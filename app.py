@@ -5,6 +5,7 @@ from pptx.util import Pt
 from pptx.chart.data import CategoryChartData
 from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
 from pptx.enum.chart import XL_CHART_TYPE
+from pptx.opc.packuri import PackURI
 from PIL import Image
 import json
 import datetime
@@ -46,7 +47,6 @@ st.caption("AI資料 自動生成システム")
 # API呼び出し用リトライヘルパー（429/503対策）
 # ==========================================
 def call_gemini_with_retry(client, prompt, max_retries=3):
-    """429(Quota超過)時に指定時間待機して自動リトライする安全関数"""
     for attempt in range(max_retries):
         try:
             response = client.models.generate_content(
@@ -72,7 +72,6 @@ def call_gemini_with_retry(client, prompt, max_retries=3):
 # テキスト・注意文クリーニング
 # ==========================================
 def clean_notice_text(text):
-    """注意文の先頭にある『※』『*』『注意：』などの重複記号を自動除去"""
     if not text:
         return ""
     return re.sub(r'^(?:[※\*\:\s]|注意[：:]|注[：:])+', '', str(text).strip())
@@ -81,29 +80,45 @@ def clean_notice_text(text):
 # テンプレート・スライド物理複製クローンエンジン
 # ==========================================
 def duplicate_slide_in_prs(prs, src_idx):
-    """
-    テンプレートの指定インデックスのスライドを複製（クローン）して
-    プレゼンテーションの末尾に安全に追加する関数（画像・グラフの参照関係も完全維持）
-    """
     src_slide = prs.slides[src_idx]
     new_slide = prs.slides.add_slide(src_slide.slide_layout)
     
-    # 自動追加された不要なデフォルト枠をクリア
     for shp in list(new_slide.shapes):
         sp = shp._element
         sp.getparent().remove(sp)
         
-    # ソーススライドの全シェイプ（図形・テキスト・画像・表・グラフ）を複製
     for shape in src_slide.shapes:
         new_el = copy.deepcopy(shape._element)
         
-        # 画像(r:embed)やグラフ(r:id)などの内部リレーションを複製先スライドに確実に引き継ぐ
         try:
             r_ids = shape._element.xpath('.//@r:embed | .//@r:id')
             for rId in r_ids:
                 if rId in src_slide.part.rels:
                     rel = src_slide.part.rels[rId]
-                    new_rId = new_slide.part.relate_to(rel.target_part, rel.reltype)
+                    target_part = rel.target_part
+                    
+                    if "chart" in rel.reltype.lower():
+                        uniq_ts = time.time_ns()
+                        new_chart_part = prs.part.package.part_factory(
+                            PackURI(f"/ppt/charts/chart_auto_{uniq_ts}.xml"),
+                            target_part.content_type,
+                            rel.reltype,
+                            target_part.blob
+                        )
+                        for c_rId, c_rel in list(target_part.rels.items()):
+                            c_target = c_rel.target_part
+                            new_excel = prs.part.package.part_factory(
+                                PackURI(f"/ppt/embeddings/excel_auto_{uniq_ts}.xlsx"),
+                                c_target.content_type,
+                                c_rel.reltype,
+                                c_target.blob
+                            )
+                            new_chart_part.relate_to(new_excel, c_rel.reltype)
+                        
+                        new_rId = new_slide.part.relate_to(new_chart_part, rel.reltype)
+                    else:
+                        new_rId = new_slide.part.relate_to(target_part, rel.reltype)
+                        
                     for elem in new_el.iter():
                         for k, v in list(elem.attrib.items()):
                             if v == rId:
@@ -115,10 +130,9 @@ def duplicate_slide_in_prs(prs, src_idx):
     return new_slide
 
 # ==========================================
-# ページ番号確実配置エンジン
+# ページ番号配置
 # ==========================================
 def ensure_page_number(slide, page_num):
-    """スライド右下にページ番号（1, 2, 3...）を確実に付与"""
     found_page_shape = None
 
     for shape in slide.shapes:
@@ -153,7 +167,6 @@ def ensure_page_number(slide, page_num):
 # テンプレート自動診断関数
 # ==========================================
 def inspect_template(template_path):
-    """テンプレート内のスライド構成とグラフ位置を自動判定"""
     prs = Presentation(template_path)
     info = {
         "count": len(prs.slides),
@@ -397,6 +410,10 @@ if st.button("✨資料を生成する✨"):
 
                 st.caption(f"ℹ️ テンプレート確認: 全{tpl_slide_count}枚 / 折れ線スライド: {tpl_diag['line_chart_idx']}番 / 棒グラフスライド: {tpl_diag['bar_chart_idx']}番")
 
+                # グラフスライド存在警告チェック
+                if tpl_diag['line_chart_idx'] is None and tpl_diag['bar_chart_idx'] is None:
+                    st.warning("⚠️ アップロードされたテンプレート内にグラフオブジェクトが検出されませんでした。GitHubのdevブランチに『グラフを追加した最新テンプレート』が上書きされているかご確認ください。")
+
                 client = genai.Client(api_key=api_key)
 
                 prompt_data = {
@@ -499,7 +516,6 @@ if st.button("✨資料を生成する✨"):
                     assigned_files = [uploaded_files[i] for i in img_indices if uploaded_files and i < len(uploaded_files)]
                     captions = ch.get("image_captions", [])
 
-                    # ★強制作動判定：chart_info がある、またはタイトル・本文に数値関連のワードがあれば無条件でグラフ化★
                     chart_info = ch.get("chart_info")
                     has_values = bool(chart_info and isinstance(chart_info.get("values"), list) and len(chart_info.get("values")) > 0)
                     is_chart_keyword = any(kw in clean_ch_title for kw in ["推移", "売上", "実績", "比較", "グラフ", "データ"])
@@ -507,19 +523,18 @@ if st.button("✨資料を生成する✨"):
                     target_template_idx = 2
                     
                     if has_values or is_chart_keyword or "line" in layout_type or "bar" in layout_type or "chart" in layout_type:
-                        # 棒グラフの指示がある場合のみ棒グラフ、それ以外（推移など）は折れ線グラフ
                         if "bar" in layout_type or "棒" in clean_ch_title:
                             if tpl_diag["bar_chart_idx"] is not None:
                                 target_template_idx = tpl_diag["bar_chart_idx"]
                             else:
-                                target_template_idx = tpl_slide_count - 2 if tpl_slide_count >= 11 else tpl_slide_count - 1
+                                target_template_idx = 2
                         else:
                             if tpl_diag["line_chart_idx"] is not None:
                                 target_template_idx = tpl_diag["line_chart_idx"]
                             elif tpl_diag["bar_chart_idx"] is not None:
                                 target_template_idx = tpl_diag["bar_chart_idx"]
                             else:
-                                target_template_idx = tpl_slide_count - 1
+                                target_template_idx = 2
                     elif layout_type == "checklist" or "確認" in clean_ch_title or "チェック" in clean_ch_title:
                         target_template_idx = 9 if tpl_slide_count > 9 else 5
                     elif layout_type == "step" or "フロー" in clean_ch_title or "流れ" in clean_ch_title or "手順" in clean_ch_title or "アクション" in clean_ch_title:
@@ -596,7 +611,7 @@ if st.button("✨資料を生成する✨"):
                         assigned_files=assigned_files, captions=captions
                     )
 
-                    # グラフデータの動的更新（バックアップデータ自動生成機能付き）
+                    # グラフデータの動的更新
                     if not chart_info or not chart_info.get("values"):
                         chart_info = {
                             "title": "月別売上推移（万円）",
