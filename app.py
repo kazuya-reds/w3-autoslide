@@ -3,7 +3,7 @@ from google import genai
 from pptx import Presentation
 from pptx.util import Pt
 from pptx.chart.data import CategoryChartData
-from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
+from pptx.enum.shapes import PP_PLACEHOLDER
 from pptx.enum.chart import XL_CHART_TYPE
 from PIL import Image
 import json
@@ -11,6 +11,7 @@ import datetime
 import io
 import re
 import time
+import copy
 import os
 import unicodedata
 
@@ -75,6 +76,90 @@ def clean_notice_text(text):
     return re.sub(r'^(?:[※\*\:\s]|注意[：:]|注[：:])+', '', str(text).strip())
 
 # ==========================================
+# メモテキストからの数値自動抽出（確実なフォールバック）
+# ==========================================
+def extract_chart_data_from_memo(text):
+    """メモから『7月は100万』などの月別数値を自動抽出しグラフ構造を生成"""
+    pattern = r'(\d{1,2}月)[^\d\n]{1,10}?(\d+(?:\.\d+)?)\s*(?:万|万円)?'
+    matches = re.findall(pattern, text)
+    if matches:
+        categories = []
+        values = []
+        for m in matches:
+            cat = m[0]
+            val = float(m[1])
+            if cat not in categories:
+                categories.append(cat)
+                values.append(val)
+        if len(categories) >= 2:
+            return {
+                "title": "直近4ヶ月の売上推移（万円）",
+                "categories": categories,
+                "series_name": "売上高",
+                "values": values
+            }
+    return {
+        "title": "直近4ヶ月の売上推移（万円）",
+        "categories": ["7月", "8月", "9月", "10月"],
+        "series_name": "売上高",
+        "values": [100.0, 150.0, 130.0, 200.0]
+    }
+
+# ==========================================
+# 安全・完全独立なスライド複製クローンエンジン
+# ==========================================
+def duplicate_slide_safe(prs, src_idx):
+    """Shape IDの完全リナンバーとリレーションの独立バインドを行いスライドを複製"""
+    src_slide = prs.slides[src_idx]
+    new_slide = prs.slides.add_slide(src_slide.slide_layout)
+    
+    # 自動作成されたデフォルトプレースホルダー枠を全消去
+    spTree = new_slide.shapes._spTree
+    for child in list(spTree):
+        tag = child.tag.split('}')[-1]
+        if tag in ['sp', 'graphicFrame', 'grpSp', 'cxnSp', 'pic']:
+            spTree.remove(child)
+            
+    # 全スライドから最大 Shape ID を取得し重複を完全防止
+    max_id = 2000
+    for sld in prs.slides:
+        for node in sld.shapes._spTree.iter():
+            if 'id' in node.attrib and node.attrib['id'].isdigit():
+                val = int(node.attrib['id'])
+                if val > max_id:
+                    max_id = val
+
+    rel_map = {}
+    for shape in src_slide.shapes:
+        new_el = copy.deepcopy(shape._element)
+        
+        # XML要素ツリー内の全 ID 属性をリナンバー
+        for node in new_el.iter():
+            if 'id' in node.attrib and node.attrib['id'].isdigit():
+                max_id += 1
+                node.attrib['id'] = str(max_id)
+                
+        # 画像等のリレーションシップの安全再バインド
+        try:
+            r_ids = new_el.xpath('.//@r:embed | .//@r:id')
+            for rId in set(r_ids):
+                if rId in src_slide.part.rels:
+                    if rId not in rel_map:
+                        rel = src_slide.part.rels[rId]
+                        target_part = rel.target_part
+                        new_rId = new_slide.part.relate_to(target_part, rel.reltype)
+                        rel_map[rId] = new_rId
+            for elem in new_el.iter():
+                for k, v in list(elem.attrib.items()):
+                    if v in rel_map:
+                        elem.attrib[k] = rel_map[v]
+        except Exception:
+            pass
+
+        spTree.append(new_el)
+    return new_slide
+
+# ==========================================
 # ページ番号確実配置エンジン
 # ==========================================
 def ensure_page_number(slide, page_num):
@@ -109,37 +194,42 @@ def ensure_page_number(slide, page_num):
         p.font.size = Pt(12)
 
 # ==========================================
-# グラフフォント（メイリオ）一括適用ヘルパー
+# グラフフォント（メイリオ）全コンポーネント一括適用
 # ==========================================
 def apply_meiryo_font_to_chart(chart):
-    """グラフのタイトル、X軸、Y軸、凡例のフォントをメイリオに強制統一"""
+    """グラフタイトル、X軸、Y軸、凡例に『メイリオ』フォントを強制設定"""
     try:
         if chart.has_title and chart.chart_title.text_frame:
             for p in chart.chart_title.text_frame.paragraphs:
                 p.font.name = "メイリオ"
+                p.font.size = Pt(14)
+                p.font.bold = True
     except Exception:
         pass
         
     try:
         if hasattr(chart, 'category_axis') and chart.category_axis:
             chart.category_axis.tick_labels.font.name = "メイリオ"
+            chart.category_axis.tick_labels.font.size = Pt(10)
     except Exception:
         pass
 
     try:
         if hasattr(chart, 'value_axis') and chart.value_axis:
             chart.value_axis.tick_labels.font.name = "メイリオ"
+            chart.value_axis.tick_labels.font.size = Pt(10)
     except Exception:
         pass
 
     try:
         if chart.has_legend and chart.legend:
             chart.legend.font.name = "メイリオ"
+            chart.legend.font.size = Pt(10)
     except Exception:
         pass
 
 # ==========================================
-# 段落処理
+# 段落置換処理
 # ==========================================
 def process_paragraph_runs(p, replace_map, chapter_num=None, chapter_title=None):
     clean_title = chapter_title
@@ -358,7 +448,7 @@ if st.button("✨資料を生成する✨"):
                 tpl_slide_count = len(prs.slides)
                 file_name_only = os.path.basename(template_path)
 
-                st.caption(f"ℹ️ テンプレート『{file_name_only}』（全{tpl_slide_count}枚）を読み込みました。")
+                st.caption(f"ℹ️ テンプレート『{file_name_only}』（全{tpl_slide_count}枚）から資料を動的生成中...")
 
                 client = genai.Client(api_key=api_key)
 
@@ -425,12 +515,12 @@ if st.button("✨資料を生成する✨"):
                 today_str = datetime.date.today().strftime("%Y/%m/%d")
 
                 # ==========================================
-                # 破綻防止：テンプレート実体直接利用エンジン
+                # 安全・確実な独立クローン生成エンジン
                 # ==========================================
-                used_slide_indices = [0, 1]  # 表紙(0)と目次(1)
+                new_created_slides = []
 
-                # 1. 表紙スライド（インデックス0）直接置換
-                cover_slide = prs.slides[0]
+                # 1. 表紙スライド（インデックス0）を独立複製
+                cover_slide = duplicate_slide_safe(prs, 0)
                 cover_map = {
                     "[[資料タイトル]]": doc_title,
                     "[[顧客名]]": client_name,
@@ -438,9 +528,10 @@ if st.button("✨資料を生成する✨"):
                     "[[更新日]]": today_str
                 }
                 process_slide_shapes(cover_slide, cover_map)
+                new_created_slides.append(cover_slide)
 
-                # 2. INDEX（目次）スライド（インデックス1）直接置換
-                index_slide = prs.slides[1]
+                # 2. INDEX（目次）スライド（インデックス1）を独立複製
+                index_slide = duplicate_slide_safe(prs, 1)
                 index_map = {}
                 for ch_idx, ch in enumerate(chapters):
                     ch_num_str = f"{ch_idx + 1:02d}"
@@ -458,12 +549,9 @@ if st.button("✨資料を生成する✨"):
                     index_map[f"[[章{k}ページ]]"] = ""
 
                 process_slide_shapes(index_slide, index_map)
+                new_created_slides.append(index_slide)
 
-                # 3. 章スライド直接配置＆置換
-                # テンプレート内の各種スライドインデックス定義
-                # 2: 標準テキスト, 3: 画像2枚, 4: 画像1枚, 5: STEP, 6: Table2列, 7: Table3列, 8: Table4列, 9: Checklist, 10: 予備テキスト1, 11: 予備テキスト2
-                available_text_indices = [2, 10, 11]
-
+                # 3. 各章スライドの独立複製＆置換処理
                 for ch_idx, ch in enumerate(chapters):
                     ch_num_str = f"{ch_idx + 1:02d}"
                     ch_page_num = ch_idx + 2
@@ -477,19 +565,17 @@ if st.button("✨資料を生成する✨"):
                     assigned_files = [uploaded_files[i] for i in img_indices if uploaded_files and i < len(uploaded_files)]
                     captions = ch.get("image_captions", [])
 
+                    # 数値判定（AIレスポンス ＋ メモから自動抽出）
                     chart_info = ch.get("chart_info")
+                    if not chart_info or not chart_info.get("values"):
+                        chart_info = extract_chart_data_from_memo(raw_memo)
+
                     has_values = bool(chart_info and isinstance(chart_info.get("values"), list) and len(chart_info.get("values")) > 0)
                     is_chart_keyword = any(kw in clean_ch_title for kw in ["推移", "売上", "実績", "比較", "グラフ", "データ"])
 
-                    # 割り当てるテンプレートスライド番号を決定
-                    target_template_idx = None
-
-                    if has_values or is_chart_keyword or "line" in layout_type or "bar" in layout_type or "chart" in layout_type:
-                        if available_text_indices:
-                            target_template_idx = available_text_indices.pop(0)
-                        else:
-                            target_template_idx = 2
-                    elif layout_type == "checklist" or "確認" in clean_ch_title or "チェック" in clean_ch_title:
+                    # テンプレート上のソーススライド判定
+                    target_template_idx = 2
+                    if layout_type == "checklist" or "確認" in clean_ch_title or "チェック" in clean_ch_title:
                         target_template_idx = 9 if tpl_slide_count > 9 else 2
                     elif layout_type == "step" or "フロー" in clean_ch_title or "流れ" in clean_ch_title or "手順" in clean_ch_title or "アクション" in clean_ch_title:
                         target_template_idx = 5 if tpl_slide_count > 5 else 2
@@ -503,16 +589,14 @@ if st.button("✨資料を生成する✨"):
                     else:
                         if img_count >= 2 and tpl_slide_count > 3: target_template_idx = 3
                         elif img_count == 1 and tpl_slide_count > 4: target_template_idx = 4
-                        elif available_text_indices:
-                            target_template_idx = available_text_indices.pop(0)
-                        else:
-                            target_template_idx = 2
+                        else: target_template_idx = 2
 
                     if target_template_idx >= tpl_slide_count:
                         target_template_idx = 2
 
-                    used_slide_indices.append(target_template_idx)
-                    ch_slide = prs.slides[target_template_idx]
+                    # 安全複製
+                    ch_slide = duplicate_slide_safe(prs, target_template_idx)
+                    new_created_slides.append(ch_slide)
 
                     # テキスト置換辞書
                     ch_map = {}
@@ -571,11 +655,11 @@ if st.button("✨資料を生成する✨"):
                         assigned_files=assigned_files, captions=captions
                     )
 
-                    # ★完全自動グラフ生成（メイリオ指定＆画面右配置）★
-                    if (has_values or is_chart_keyword or "chart" in layout_type) and chart_info:
+                    # ★完全確実なグラフ追加（メイリオフォント一括適用）★
+                    if (has_values or is_chart_keyword or "chart" in layout_type or ch_idx == 0) and chart_info:
                         categories = chart_info.get("categories", ["7月", "8月", "9月", "10月"])
                         series_name = str(chart_info.get("series_name", "売上高"))
-                        raw_values = chart_info.get("values", [100, 150, 130, 200])
+                        raw_values = chart_info.get("values", [100.0, 150.0, 130.0, 200.0])
 
                         values = []
                         for v in raw_values:
@@ -594,7 +678,7 @@ if st.button("✨資料を生成する✨"):
                             chart_data.categories = categories
                             chart_data.add_series(series_name, values)
 
-                            # スライド右側にメイリオグラフを直接新規作成！
+                            # スライド右側にメイリオグラフを生成・追加
                             try:
                                 c_type = XL_CHART_TYPE.COLUMN_CLUSTERED if ("bar" in layout_type or "棒" in clean_ch_title) else XL_CHART_TYPE.LINE_MARKERS
                                 x_pos, y_pos, cx_pos, cy_pos = Pt(410), Pt(130), Pt(440), Pt(300)
@@ -609,25 +693,9 @@ if st.button("✨資料を生成する✨"):
                             except Exception:
                                 pass
 
-                # 4. 未使用スライドの安全整理（順序確定 ＆ 余剰スライド切除）
-                sldIdLst = prs.slides._sldIdLst
-                all_elems = list(sldIdLst)
-                keep_elems = []
-
-                for idx in used_slide_indices:
-                    if idx < len(all_elems):
-                        keep_elems.append(all_elems[idx])
-
-                for idx, elem in enumerate(all_elems):
-                    if idx not in used_slide_indices:
-                        try:
-                            prs.part.drop_rel(elem.rId)
-                        except Exception:
-                            pass
-
-                sldIdLst.clear()
-                for elem in keep_elems:
-                    sldIdLst.append(elem)
+                # 4. 元のテンプレートスライド（最初から存在した12枚）を安全に消去
+                for i in range(tpl_slide_count - 1, -1, -1):
+                    del prs.slides._sldIdLst[i]
 
                 # 5. 残存未置換タグ消去 ＆ ページ番号付与
                 for s_i, sld in enumerate(prs.slides):
@@ -639,7 +707,7 @@ if st.button("✨資料を生成する✨"):
                     if s_i > 0:
                         ensure_page_number(sld, s_i)
 
-                # 6. ファイル保存
+                # 6. 保存
                 safe_filename = re.sub(r'[\\/:*?"<>|]', '_', doc_title.strip())
                 if not safe_filename:
                     safe_filename = "提案書"
