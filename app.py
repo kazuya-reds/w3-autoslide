@@ -76,21 +76,39 @@ def clean_notice_text(text):
     return re.sub(r'^(?:[※\*\:\s]|注意[：:]|注[：:])+', '', str(text).strip())
 
 # ==========================================
-# テンプレート・スライド物理複製クローンエンジン（参照破壊完全防止版）
+# テンプレート・スライド物理複製クローンエンジン（破損完全防止・IDリナンバー版）
 # ==========================================
 def duplicate_slide_in_prs(prs, src_idx):
     src_slide = prs.slides[src_idx]
     new_slide = prs.slides.add_slide(src_slide.slide_layout)
     
-    # 不要な初期プレースホルダー枠を消去
-    for shp in list(new_slide.shapes):
-        sp = shp._element
-        sp.getparent().remove(sp)
-        
+    # 1. add_slide で自動追加されたデフォルトプレースホルダー枠を全消去
+    spTree = new_slide.shapes._spTree
+    for child in list(spTree):
+        tag = child.tag.split('}')[-1]
+        if tag in ['sp', 'graphicFrame', 'grpSp', 'cxnSp', 'pic']:
+            spTree.remove(child)
+            
+    # 2. 全スライドから最大 Shape ID を取得し、IDの重複を完全に防止
+    max_id = 100
+    for sld in prs.slides:
+        for node in sld.shapes._spTree.iter():
+            if 'id' in node.attrib and node.attrib['id'].isdigit():
+                val = int(node.attrib['id'])
+                if val > max_id:
+                    max_id = val
+
     rel_map = {}
     for shape in src_slide.shapes:
         new_el = copy.deepcopy(shape._element)
         
+        # IDの振り直し
+        for node in new_el.iter():
+            if 'id' in node.attrib and node.attrib['id'].isdigit():
+                max_id += 1
+                node.attrib['id'] = str(max_id)
+                
+        # リレーションシップ（画像・グラフなど）の安全再バインド
         try:
             r_ids = new_el.xpath('.//@r:embed | .//@r:id')
             for rId in set(r_ids):
@@ -100,7 +118,6 @@ def duplicate_slide_in_prs(prs, src_idx):
                         target_part = rel.target_part
                         new_rId = new_slide.part.relate_to(target_part, rel.reltype)
                         rel_map[rId] = new_rId
-            
             for elem in new_el.iter():
                 for k, v in list(elem.attrib.items()):
                     if v in rel_map:
@@ -108,7 +125,7 @@ def duplicate_slide_in_prs(prs, src_idx):
         except Exception:
             pass
 
-        new_slide.shapes._spTree.append(new_el)
+        spTree.append(new_el)
     return new_slide
 
 # ==========================================
@@ -144,6 +161,35 @@ def ensure_page_number(slide, page_num):
         p = tf.paragraphs[0]
         p.text = str(page_num)
         p.font.size = Pt(12)
+
+# ==========================================
+# グラフフォント（メイリオ）一括適用ヘルパー
+# ==========================================
+def apply_meiryo_font_to_chart(chart):
+    try:
+        if chart.has_title and chart.chart_title.text_frame:
+            for p in chart.chart_title.text_frame.paragraphs:
+                p.font.name = "メイリオ"
+    except Exception:
+        pass
+        
+    try:
+        if hasattr(chart, 'category_axis') and chart.category_axis:
+            chart.category_axis.tick_labels.font.name = "メイリオ"
+    except Exception:
+        pass
+
+    try:
+        if hasattr(chart, 'value_axis') and chart.value_axis:
+            chart.value_axis.tick_labels.font.name = "メイリオ"
+    except Exception:
+        pass
+
+    try:
+        if chart.has_legend and chart.legend:
+            chart.legend.font.name = "メイリオ"
+    except Exception:
+        pass
 
 # ==========================================
 # テンプレート自動診断関数
@@ -398,7 +444,7 @@ if st.button("✨資料を生成する✨"):
                 tpl_slide_count = len(prs.slides)
                 file_name_only = os.path.basename(template_path)
 
-                st.caption(f"ℹ️ 読み込みファイル: `{file_name_only}` （全{tpl_slide_count}枚） / 折れ線: {tpl_diag['line_chart_idx']}番 / 棒グラフ: {tpl_diag['bar_chart_idx']}番")
+                st.caption(f"ℹ️ 読み込みファイル: `{file_name_only}` （全{tpl_slide_count}枚） / 動的グラフ挿入機能: ON")
 
                 client = genai.Client(api_key=api_key)
 
@@ -445,9 +491,9 @@ if st.button("✨資料を生成する✨"):
                       "assigned_image_indices": [],
                       "image_captions": [],
                       "chart_info": {{
-                        "title": "グラフのタイトル",
+                        "title": "直近4ヶ月の売上推移（万円）",
                         "categories": ["7月", "8月", "9月", "10月"],
-                        "series_name": "売上高（万円）",
+                        "series_name": "売上高",
                         "values": [100, 150, 130, 200]
                       }}
                     }}
@@ -512,12 +558,8 @@ if st.button("✨資料を生成する✨"):
                         if "bar" in layout_type or "棒" in clean_ch_title:
                             if tpl_diag["bar_chart_idx"] is not None:
                                 target_template_idx = tpl_diag["bar_chart_idx"]
-                            elif tpl_diag["line_chart_idx"] is not None:
-                                target_template_idx = tpl_diag["line_chart_idx"]
                             elif tpl_diag["all_chart_indices"]:
                                 target_template_idx = tpl_diag["all_chart_indices"][0]
-                            elif tpl_slide_count >= 11:
-                                target_template_idx = tpl_slide_count - 2
                             else:
                                 target_template_idx = 2
                         else:
@@ -527,8 +569,6 @@ if st.button("✨資料を生成する✨"):
                                 target_template_idx = tpl_diag["bar_chart_idx"]
                             elif tpl_diag["all_chart_indices"]:
                                 target_template_idx = tpl_diag["all_chart_indices"][0]
-                            elif tpl_slide_count >= 11:
-                                target_template_idx = tpl_slide_count - 1
                             else:
                                 target_template_idx = 2
                     elif layout_type == "checklist" or "確認" in clean_ch_title or "チェック" in clean_ch_title:
@@ -607,60 +647,58 @@ if st.button("✨資料を生成する✨"):
                         assigned_files=assigned_files, captions=captions
                     )
 
-                    # グラフデータの動的更新（メイリオフォント指定付き）
-                    if chart_info and chart_info.get("values"):
-                        for shape in ch_slide.shapes:
-                            if shape.has_chart:
-                                try:
-                                    chart = shape.chart
-                                    if chart_info.get("title") and chart.has_title:
-                                        chart.chart_title.text_frame.text = str(chart_info.get("title"))
-                                        for p in chart.chart_title.text_frame.paragraphs:
-                                            p.font.name = "メイリオ"
-                                    
-                                    categories = chart_info.get("categories", ["7月", "8月", "9月", "10月"])
-                                    series_name = str(chart_info.get("series_name", "実績"))
-                                    raw_values = chart_info.get("values", [100, 150, 130, 200])
-                                    
-                                    values = []
-                                    for v in raw_values:
-                                        try:
-                                            num_str = re.sub(r'[^\d\.]', '', str(v))
-                                            values.append(float(num_str) if num_str else 0.0)
-                                        except Exception:
-                                            values.append(0.0)
-                                    
-                                    if categories and values:
-                                        min_len = min(len(categories), len(values))
-                                        categories = categories[:min_len]
-                                        values = values[:min_len]
-                                        
-                                        chart_data = CategoryChartData()
-                                        chart_data.categories = categories
-                                        chart_data.add_series(series_name, values)
+                    # ★完全自動グラフ処理（動的生成機能付き）★
+                    if (has_values or is_chart_keyword or "chart" in layout_type) and chart_info:
+                        categories = chart_info.get("categories", ["7月", "8月", "9月", "10月"])
+                        series_name = str(chart_info.get("series_name", "実績"))
+                        raw_values = chart_info.get("values", [100, 150, 130, 200])
+
+                        values = []
+                        for v in raw_values:
+                            try:
+                                num_str = re.sub(r'[^\d\.]', '', str(v))
+                                values.append(float(num_str) if num_str else 0.0)
+                            except Exception:
+                                values.append(0.0)
+
+                        if categories and values:
+                            min_len = min(len(categories), len(values))
+                            categories = categories[:min_len]
+                            values = values[:min_len]
+
+                            chart_data = CategoryChartData()
+                            chart_data.categories = categories
+                            chart_data.add_series(series_name, values)
+
+                            found_chart = False
+                            for shape in ch_slide.shapes:
+                                if shape.has_chart:
+                                    try:
+                                        chart = shape.chart
+                                        if chart_info.get("title") and chart.has_title:
+                                            chart.chart_title.text_frame.text = str(chart_info.get("title"))
                                         chart.replace_data(chart_data)
-
-                                    try:
-                                        if hasattr(chart, 'category_axis') and chart.category_axis:
-                                            chart.category_axis.tick_labels.font.name = "メイリオ"
+                                        apply_meiryo_font_to_chart(chart)
+                                        found_chart = True
                                     except Exception:
                                         pass
+                                    break
 
-                                    try:
-                                        if hasattr(chart, 'value_axis') and chart.value_axis:
-                                            chart.value_axis.tick_labels.font.name = "メイリオ"
-                                    except Exception:
-                                        pass
-
-                                    try:
-                                        if chart.has_legend and chart.legend:
-                                            chart.legend.font.name = "メイリオ"
-                                    except Exception:
-                                        pass
-
+                            # テンプレートにグラフ枠が無い場合、右側領域に『メイリオグラフ』を動的自動描画！
+                            if not found_chart:
+                                try:
+                                    c_type = XL_CHART_TYPE.COLUMN_CLUSTERED if ("bar" in layout_type or "棒" in clean_ch_title) else XL_CHART_TYPE.LINE_MARKERS
+                                    x_pos, y_pos, cx_pos, cy_pos = Pt(410), Pt(130), Pt(440), Pt(300)
+                                    chart_shape = ch_slide.shapes.add_chart(c_type, x_pos, y_pos, cx_pos, cy_pos, chart_data)
+                                    chart = chart_shape.chart
+                                    
+                                    chart.has_title = True
+                                    c_title = chart_info.get("title") if chart_info.get("title") else f"{clean_ch_title} 推移"
+                                    chart.chart_title.text_frame.text = str(c_title)
+                                    
+                                    apply_meiryo_font_to_chart(chart)
                                 except Exception:
                                     pass
-                                break
 
                 # 4. INDEXデータ反映
                 for k in range(len(chapters) + 1, 7):
@@ -677,11 +715,14 @@ if st.button("✨資料を生成する✨"):
 
                 new_slides.extend(chapter_slides)
 
-                # 5. 元テンプレートスライドの物理削除（★安全削除：drop_relを行わず参照切れを完全防止）
-                sldIdLst = prs.slides._sldIdLst
+                # 5. 元テンプレートスライドの完全安全削除（rels参照の孤立を100%防止）
                 for i in range(tpl_slide_count - 1, -1, -1):
-                    elem = sldIdLst[i]
-                    sldIdLst.remove(elem)
+                    rId = prs.slides._sldIdLst[i].rId
+                    del prs.slides._sldIdLst[i]
+                    try:
+                        prs.part.drop_rel(rId)
+                    except Exception:
+                        pass
 
                 # 6. 残存タグ消去＆ページ番号
                 for s_i, sld in enumerate(prs.slides):
