@@ -76,30 +76,35 @@ def clean_notice_text(text):
     return re.sub(r'^(?:[※\*\:\s]|注意[：:]|注[：:])+', '', str(text).strip())
 
 # ==========================================
-# テンプレート・スライド物理複製クローンエンジン
+# テンプレート・スライド物理複製クローンエンジン（参照破壊完全防止版）
 # ==========================================
 def duplicate_slide_in_prs(prs, src_idx):
     src_slide = prs.slides[src_idx]
     new_slide = prs.slides.add_slide(src_slide.slide_layout)
     
+    # 不要な初期プレースホルダー枠を消去
     for shp in list(new_slide.shapes):
         sp = shp._element
         sp.getparent().remove(sp)
         
+    rel_map = {}
     for shape in src_slide.shapes:
         new_el = copy.deepcopy(shape._element)
         
         try:
-            r_ids = shape._element.xpath('.//@r:embed | .//@r:id')
-            for rId in r_ids:
+            r_ids = new_el.xpath('.//@r:embed | .//@r:id')
+            for rId in set(r_ids):
                 if rId in src_slide.part.rels:
-                    rel = src_slide.part.rels[rId]
-                    target_part = rel.target_part
-                    new_rId = new_slide.part.relate_to(target_part, rel.reltype)
-                    for elem in new_el.iter():
-                        for k, v in list(elem.attrib.items()):
-                            if v == rId:
-                                elem.attrib[k] = new_rId
+                    if rId not in rel_map:
+                        rel = src_slide.part.rels[rId]
+                        target_part = rel.target_part
+                        new_rId = new_slide.part.relate_to(target_part, rel.reltype)
+                        rel_map[rId] = new_rId
+            
+            for elem in new_el.iter():
+                for k, v in list(elem.attrib.items()):
+                    if v in rel_map:
+                        elem.attrib[k] = rel_map[v]
         except Exception:
             pass
 
@@ -148,19 +153,26 @@ def inspect_template(template_path):
     info = {
         "count": len(prs.slides),
         "bar_chart_idx": None,
-        "line_chart_idx": None
+        "line_chart_idx": None,
+        "all_chart_indices": []
     }
     for idx, sld in enumerate(prs.slides):
         for shape in sld.shapes:
             if shape.has_chart:
-                c_type = shape.chart.chart_type
-                if c_type in [XL_CHART_TYPE.LINE, XL_CHART_TYPE.LINE_MARKERS, XL_CHART_TYPE.LINE_STACKED] or "LINE" in str(c_type):
-                    info["line_chart_idx"] = idx
-                elif c_type in [XL_CHART_TYPE.COLUMN_CLUSTERED, XL_CHART_TYPE.BAR_CLUSTERED] or "BAR" in str(c_type) or "COLUMN" in str(c_type):
-                    info["bar_chart_idx"] = idx
-                else:
-                    if info["bar_chart_idx"] is None:
+                if idx not in info["all_chart_indices"]:
+                    info["all_chart_indices"].append(idx)
+                try:
+                    c_type_str = str(shape.chart.chart_type).upper()
+                    if "LINE" in c_type_str:
+                        info["line_chart_idx"] = idx
+                    elif "BAR" in c_type_str or "COLUMN" in c_type_str:
                         info["bar_chart_idx"] = idx
+                    else:
+                        if info["bar_chart_idx"] is None:
+                            info["bar_chart_idx"] = idx
+                except Exception:
+                    if info["line_chart_idx"] is None:
+                        info["line_chart_idx"] = idx
     return info
 
 # ==========================================
@@ -384,11 +396,9 @@ if st.button("✨資料を生成する✨"):
                 tpl_diag = inspect_template(template_path)
                 prs = Presentation(template_path)
                 tpl_slide_count = len(prs.slides)
+                file_name_only = os.path.basename(template_path)
 
-                st.caption(f"ℹ️ テンプレート確認: 全{tpl_slide_count}枚 / 折れ線スライド: {tpl_diag['line_chart_idx']}番 / 棒グラフスライド: {tpl_diag['bar_chart_idx']}番")
-
-                if tpl_slide_count <= 10 and tpl_diag['line_chart_idx'] is None and tpl_diag['bar_chart_idx'] is None:
-                    st.error("❌ GitHub上のテンプレートが10枚（旧ファイル）です。Macでグラフを追加した最新テンプレートをGitHub（devブランチ）に上書きアップロードしてください。")
+                st.caption(f"ℹ️ 読み込みファイル: `{file_name_only}` （全{tpl_slide_count}枚） / 折れ線: {tpl_diag['line_chart_idx']}番 / 棒グラフ: {tpl_diag['bar_chart_idx']}番")
 
                 client = genai.Client(api_key=api_key)
 
@@ -502,6 +512,10 @@ if st.button("✨資料を生成する✨"):
                         if "bar" in layout_type or "棒" in clean_ch_title:
                             if tpl_diag["bar_chart_idx"] is not None:
                                 target_template_idx = tpl_diag["bar_chart_idx"]
+                            elif tpl_diag["line_chart_idx"] is not None:
+                                target_template_idx = tpl_diag["line_chart_idx"]
+                            elif tpl_diag["all_chart_indices"]:
+                                target_template_idx = tpl_diag["all_chart_indices"][0]
                             elif tpl_slide_count >= 11:
                                 target_template_idx = tpl_slide_count - 2
                             else:
@@ -509,6 +523,10 @@ if st.button("✨資料を生成する✨"):
                         else:
                             if tpl_diag["line_chart_idx"] is not None:
                                 target_template_idx = tpl_diag["line_chart_idx"]
+                            elif tpl_diag["bar_chart_idx"] is not None:
+                                target_template_idx = tpl_diag["bar_chart_idx"]
+                            elif tpl_diag["all_chart_indices"]:
+                                target_template_idx = tpl_diag["all_chart_indices"][0]
                             elif tpl_slide_count >= 11:
                                 target_template_idx = tpl_slide_count - 1
                             else:
@@ -589,14 +607,12 @@ if st.button("✨資料を生成する✨"):
                         assigned_files=assigned_files, captions=captions
                     )
 
-                    # グラフデータの動的更新（メイリオフォント強制設定付き）
+                    # グラフデータの動的更新（メイリオフォント指定付き）
                     if chart_info and chart_info.get("values"):
                         for shape in ch_slide.shapes:
                             if shape.has_chart:
                                 try:
                                     chart = shape.chart
-                                    
-                                    # タイトル更新 ＆ メイリオ化
                                     if chart_info.get("title") and chart.has_title:
                                         chart.chart_title.text_frame.text = str(chart_info.get("title"))
                                         for p in chart.chart_title.text_frame.paragraphs:
@@ -624,7 +640,6 @@ if st.button("✨資料を生成する✨"):
                                         chart_data.add_series(series_name, values)
                                         chart.replace_data(chart_data)
 
-                                    # グラフ全体のフォントをメイリオに強制統一
                                     try:
                                         if hasattr(chart, 'category_axis') and chart.category_axis:
                                             chart.category_axis.tick_labels.font.name = "メイリオ"
@@ -662,11 +677,10 @@ if st.button("✨資料を生成する✨"):
 
                 new_slides.extend(chapter_slides)
 
-                # 5. 元テンプレートスライド削除
+                # 5. 元テンプレートスライドの物理削除（★安全削除：drop_relを行わず参照切れを完全防止）
                 sldIdLst = prs.slides._sldIdLst
                 for i in range(tpl_slide_count - 1, -1, -1):
                     elem = sldIdLst[i]
-                    prs.part.drop_rel(elem.rId)
                     sldIdLst.remove(elem)
 
                 # 6. 残存タグ消去＆ページ番号
