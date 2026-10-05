@@ -95,15 +95,15 @@ def extract_chart_data_from_memo(text):
                 values.append(val)
         if len(categories) >= 2:
             return {
-                "title": "直近4ヶ月の売上推移（万円）",
+                "title": "直近4ヶ月の売上推移",
                 "categories": categories,
-                "series_name": "売上高",
+                "series_name": "売上高（万円）",
                 "values": values
             }
     return {
-        "title": "直近4ヶ月の売上推移（万円）",
+        "title": "直近4ヶ月の売上推移",
         "categories": ["7月", "8月", "9月", "10月"],
-        "series_name": "売上高",
+        "series_name": "売上高（万円）",
         "values": [100.0, 150.0, 130.0, 200.0]
     }
 
@@ -199,21 +199,8 @@ def ensure_page_number(slide, page_num):
 # グラフフォント（メイリオ）XMLレベルでの100%強制適用
 # ==========================================
 def force_meiryo_on_chart(chart):
-    """タイトルのほか、X軸・Y軸・凡例にDrawingML XMLレベルで『メイリオ』を強制的注入"""
-    # 1. タイトル
-    if chart.has_title and chart.chart_title.text_frame:
-        for p in chart.chart_title.text_frame.paragraphs:
-            p.font.name = "メイリオ"
-            for run in p.runs:
-                run.font.name = "メイリオ"
-                rPr = run._r.get_or_add_rPr()
-                for child in list(rPr):
-                    if child.tag.endswith('ea') or child.tag.endswith('latin'):
-                        rPr.remove(child)
-                rPr.append(parse_xml(f'<a:ea {nsdecls("a")} typeface="メイリオ"/>'))
-                rPr.append(parse_xml(f'<a:latin {nsdecls("a")} typeface="Meiryo"/>'))
-
-    # 2. 軸 (CategoryAxis, ValueAxis)
+    """X軸・Y軸・凡例にDrawingML XMLレベルで『メイリオ』を強制的注入"""
+    # 1. 軸 (CategoryAxis, ValueAxis)
     for axis in [getattr(chart, 'category_axis', None), getattr(chart, 'value_axis', None)]:
         if axis and hasattr(axis, 'tick_labels'):
             try:
@@ -231,7 +218,7 @@ def force_meiryo_on_chart(chart):
             except Exception:
                 pass
 
-    # 3. 凡例
+    # 2. 凡例
     if chart.has_legend and chart.legend:
         try:
             chart.legend.font.name = "メイリオ"
@@ -248,11 +235,11 @@ def force_meiryo_on_chart(chart):
 # グラフ追加スライドのレイアウト自動調整
 # ==========================================
 def adjust_shapes_for_chart(slide):
-    """スライド左側のテキストボックスの幅を最適化し、右側のグラフ領域を安全に空ける"""
+    """スライド左側のテキストボックスの幅を Pt(250) に最適化し、右側のグラフ領域を美しく空ける"""
     for shape in slide.shapes:
         if shape.has_text_frame:
-            if shape.top > Pt(100) and shape.left < Pt(300):
-                shape.width = Pt(270)
+            if shape.top > Pt(80) and shape.left < Pt(300):
+                shape.width = Pt(250)
 
 # ==========================================
 # 段落置換処理（タイトルのスペース補正追加）
@@ -540,9 +527,9 @@ if st.button("✨資料を生成する✨"):
                       "assigned_image_indices": [],
                       "image_captions": [],
                       "chart_info": {{
-                        "title": "直近4ヶ月の売上推移（万円）",
+                        "title": "直近4ヶ月の売上推移",
                         "categories": ["7月", "8月", "9月", "10月"],
-                        "series_name": "売上高",
+                        "series_name": "売上高（万円）",
                         "values": [100, 150, 130, 200]
                       }}
                     }}
@@ -651,9 +638,14 @@ if st.button("✨資料を生成する✨"):
                     ch_slide = duplicate_slide_safe(prs, target_template_idx)
                     new_created_slides.append(ch_slide)
 
+                    # 主要項目の自動補完（空文字防止）
+                    main_item_text = ch.get("main_item", "").strip()
+                    if not main_item_text:
+                        main_item_text = "売上高は堅調に推移" if ("売上" in clean_ch_title or "推移" in clean_ch_title) else clean_ch_title
+
                     # テキスト置換辞書
                     ch_map = {}
-                    ch_map["[[主要項目]]"] = ch.get("main_item", "")
+                    ch_map["[[主要項目]]"] = main_item_text
                     ch_map["[[本文]]"] = ch.get("body", "")
 
                     # ★グラフを配置するスライドでは補助項目をクリアして左側をスッキリさせる★
@@ -725,10 +717,10 @@ if st.button("✨資料を生成する✨"):
                         assigned_files=assigned_files, captions=captions
                     )
 
-                    # ★完全無比なグラフ追加（重なり防止 ＆ メイリオXML強制）★
+                    # ★完全無比なグラフ追加（タイトルの被り100%防止・黄金比レイアウト）★
                     if should_draw_chart and chart_info:
                         categories = chart_info.get("categories", ["7月", "8月", "9月", "10月"])
-                        series_name = str(chart_info.get("series_name", "売上高"))
+                        series_name = str(chart_info.get("series_name", "売上高（万円）"))
                         raw_values = chart_info.get("values", [100.0, 150.0, 130.0, 200.0])
 
                         values = []
@@ -748,19 +740,18 @@ if st.button("✨資料を生成する✨"):
                             chart_data.categories = categories
                             chart_data.add_series(series_name, values)
 
-                            # 1. 左側本文テキストボックスの幅を Pt(270) に最適化
+                            # 1. 左側本文テキストボックスの幅を Pt(250) に最適化
                             adjust_shapes_for_chart(ch_slide)
 
-                            # 2. グラフを最適位置（left=Pt(340), top=Pt(130), width=Pt(340), height=Pt(260)）へ配置
+                            # 2. グラフを最適位置（left=Pt(350), top=Pt(140), width=Pt(330), height=Pt(270)）へ配置
                             try:
                                 c_type = XL_CHART_TYPE.COLUMN_CLUSTERED if ("bar" in layout_type or "棒" in clean_ch_title) else XL_CHART_TYPE.LINE_MARKERS
-                                x_pos, y_pos, cx_pos, cy_pos = Pt(340), Pt(130), Pt(340), Pt(260)
+                                x_pos, y_pos, cx_pos, cy_pos = Pt(350), Pt(140), Pt(330), Pt(270)
                                 chart_shape = ch_slide.shapes.add_chart(c_type, x_pos, y_pos, cx_pos, cy_pos, chart_data)
                                 chart = chart_shape.chart
 
-                                chart.has_title = True
-                                c_title = chart_info.get("title") if chart_info.get("title") else f"{clean_ch_title} 推移"
-                                chart.chart_title.text_frame.text = str(c_title)
+                                # ★スライドタイトルがあるため、グラフ内部のタイトル枠は非表示（被り100%防止）★
+                                chart.has_title = False
 
                                 force_meiryo_on_chart(chart)
                                 chart_created = True  # 単一生成フラグ
