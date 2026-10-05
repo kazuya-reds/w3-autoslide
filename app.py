@@ -279,14 +279,14 @@ def force_meiryo_and_size_on_chart(chart, font_size_pt=9):
             pass
 
 # ==========================================
-# グラフ追加スライドのレイアウト自動調整
+# グラフ追加スライドのレイアウト自動調整（赤帯コンパクト化）
 # ==========================================
 def adjust_shapes_for_chart(slide):
-    """スライド左側のテキストボックスの幅を Pt(250) に最適化し、右側のグラフ領域を美しく空ける"""
+    """スライド左側のテキストボックスの幅を Pt(200) にコンパクト化し、赤帯の無駄な伸びを抑える"""
     for shape in slide.shapes:
         if shape.has_text_frame:
             if shape.top > Pt(80) and shape.left < Pt(300):
-                shape.width = Pt(250)
+                shape.width = Pt(200)
 
 # ==========================================
 # 段落置換処理
@@ -753,7 +753,7 @@ if st.button("✨資料を生成する✨"):
                         assigned_files=assigned_files, captions=captions
                     )
 
-                    # ★完全無比なグラフ追加（タイトルの被り防止・9pt小ぶりメイリオ指定）★
+                    # ★完全無比なグラフ追加（ゆったりレイアウト：left=390pt / マージン=118pt）★
                     if should_draw_chart and chart_info:
                         categories = chart_info.get("categories", ["7月", "8月", "9月", "10月"])
                         series_name = str(chart_info.get("series_name", "売上高（万円）"))
@@ -776,13 +776,13 @@ if st.button("✨資料を生成する✨"):
                             chart_data.categories = categories
                             chart_data.add_series(series_name, values)
 
-                            # 1. 左側本文テキストボックスの幅を Pt(250) に最適化
+                            # 1. 左側本文テキストボックスの幅を Pt(200) にコンパクト化（赤帯短縮）
                             adjust_shapes_for_chart(ch_slide)
 
-                            # 2. グラフを最適位置（left=Pt(350), top=Pt(140), width=Pt(330), height=Pt(270)）へ配置
+                            # 2. グラフを右（left=Pt(390), top=Pt(145), width=Pt(280), height=Pt(250)）へ配置
                             try:
                                 c_type = XL_CHART_TYPE.COLUMN_CLUSTERED if ("bar" in layout_type or "棒" in clean_ch_title) else XL_CHART_TYPE.LINE_MARKERS
-                                x_pos, y_pos, cx_pos, cy_pos = Pt(350), Pt(140), Pt(330), Pt(270)
+                                x_pos, y_pos, cx_pos, cy_pos = Pt(390), Pt(145), Pt(280), Pt(250)
                                 chart_shape = ch_slide.shapes.add_chart(c_type, x_pos, y_pos, cx_pos, cy_pos, chart_data)
                                 chart = chart_shape.chart
 
