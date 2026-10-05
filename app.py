@@ -78,7 +78,50 @@ def clean_notice_text(text):
     return re.sub(r'^(?:[※\*\:\s]|注意[：:]|注[：:])+', '', str(text).strip())
 
 # ==========================================
-# メモテキストからの数値自動抽出（確実なフォールバック）
+# 主要項目（赤帯）の長文流入防止・サニタイズ
+# ==========================================
+def sanitize_main_item(main_item, clean_ch_title):
+    """主要項目が15文字を超える長文の場合、自動的に短縮・サニタイズ"""
+    main_item = str(main_item).strip() if main_item else ""
+    if not main_item or len(main_item) > 18 or "。" in main_item or "、" in main_item:
+        first_part = re.split(r'[。\n、,]', main_item)[0].strip()
+        if 2 <= len(first_part) <= 15:
+            main_item = first_part
+        else:
+            if "推移" in clean_ch_title or "売上" in clean_ch_title:
+                main_item = "売上高は堅調に拡大"
+            elif "要因" in clean_ch_title or "分析" in clean_ch_title:
+                main_item = "増収要因と一時的影響"
+            elif "アクション" in clean_ch_title or "手順" in clean_ch_title:
+                main_item = "今後の4つの実行計画"
+            else:
+                main_item = clean_ch_title[:12]
+    return main_item
+
+# ==========================================
+# タイトル段落の番号保持・確実置換
+# ==========================================
+def format_chapter_title_paragraph(p, ch_num, ch_title):
+    """タイトルの先頭に必ず 『01 』 などの章番号を確実保持・付与"""
+    clean_title = re.sub(r'^\d+[\.\s_]*', '', str(ch_title)).strip() if ch_title else ""
+    full_text = p.text
+    if "00" in full_text or "[[章タイトル]]" in full_text:
+        new_text = full_text
+        new_text = re.sub(r'00\s*\[\[章タイトル\]\]', f"{ch_num} {clean_title}", new_text)
+        new_text = re.sub(r'\[\[章タイトル\]\]', clean_title, new_text)
+        new_text = re.sub(r'\b00\b', ch_num, new_text)
+        if not new_text.startswith(ch_num):
+            new_text = f"{ch_num} {new_text}"
+
+        if len(p.runs) > 0:
+            p.runs[0].text = new_text
+            for r in p.runs[1:]:
+                r.text = ""
+        else:
+            p.text = new_text
+
+# ==========================================
+# メモテキストからの数値自動抽出
 # ==========================================
 def extract_chart_data_from_memo(text):
     """メモから『7月は100万』などの月別数値を自動抽出しグラフ構造を生成"""
@@ -196,19 +239,21 @@ def ensure_page_number(slide, page_num):
         p.font.size = Pt(12)
 
 # ==========================================
-# グラフフォント（メイリオ）XMLレベルでの100%強制適用
+# グラフフォント（メイリオ ＋ 9pt小ぶり化）XMLレベル強制適用
 # ==========================================
-def force_meiryo_on_chart(chart):
-    """X軸・Y軸・凡例にDrawingML XMLレベルで『メイリオ』を強制的注入"""
+def force_meiryo_and_size_on_chart(chart, font_size_pt=9):
+    """X軸・Y軸・凡例の文字を 9pt の小ぶりな『メイリオ』フォントに強制統一"""
     # 1. 軸 (CategoryAxis, ValueAxis)
     for axis in [getattr(chart, 'category_axis', None), getattr(chart, 'value_axis', None)]:
         if axis and hasattr(axis, 'tick_labels'):
             try:
                 axis.tick_labels.font.name = "メイリオ"
+                axis.tick_labels.font.size = Pt(font_size_pt)
                 txPr = axis.tick_labels._element.get_or_add_txPr()
                 for p in txPr.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}p'):
                     pPr = p.get_or_add_pPr()
                     defRPr = pPr.get_or_add_defRPr()
+                    defRPr.attrib['sz'] = str(font_size_pt * 100) # 100ths of a point
                     defRPr.attrib['typeface'] = 'メイリオ'
                     for child in list(defRPr):
                         if child.tag.endswith('ea') or child.tag.endswith('latin'):
@@ -222,10 +267,12 @@ def force_meiryo_on_chart(chart):
     if chart.has_legend and chart.legend:
         try:
             chart.legend.font.name = "メイリオ"
+            chart.legend.font.size = Pt(font_size_pt)
             txPr = chart.legend._element.get_or_add_txPr()
             for p in txPr.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}p'):
                 pPr = p.get_or_add_pPr()
                 defRPr = pPr.get_or_add_defRPr()
+                defRPr.attrib['sz'] = str(font_size_pt * 100)
                 defRPr.append(parse_xml(f'<a:ea {nsdecls("a")} typeface="メイリオ"/>'))
                 defRPr.append(parse_xml(f'<a:latin {nsdecls("a")} typeface="Meiryo"/>'))
         except Exception:
@@ -242,26 +289,19 @@ def adjust_shapes_for_chart(slide):
                 shape.width = Pt(250)
 
 # ==========================================
-# 段落置換処理（タイトルのスペース補正追加）
+# 段落置換処理
 # ==========================================
 def process_paragraph_runs(p, replace_map, chapter_num=None, chapter_title=None):
-    clean_title = re.sub(r'^\d+[\.\s_]*', '', str(chapter_title)).strip() if chapter_title else ""
+    if "00" in p.text or "[[章タイトル]]" in p.text:
+        format_chapter_title_paragraph(p, chapter_num if chapter_num else "01", chapter_title)
 
     for r in p.runs:
-        if chapter_num and "00" in r.text:
-            r.text = r.text.replace("00 [[章タイトル]]", f"{chapter_num} {clean_title}")
-            r.text = r.text.replace("00[[章タイトル]]", f"{chapter_num} {clean_title}")
-            r.text = r.text.replace("00", f"{chapter_num} ")
-        if clean_title and "[[章タイトル]]" in r.text:
-            r.text = r.text.replace("[[章タイトル]]", clean_title)
         for tag, val in replace_map.items():
             if tag in r.text:
                 r.text = r.text.replace(tag, str(val))
 
     p_text = p.text
     has_unreplaced_tag = False
-    if clean_title and "[[章タイトル]]" in p_text:
-        has_unreplaced_tag = True
     for tag in replace_map:
         if tag in p_text:
             has_unreplaced_tag = True
@@ -269,10 +309,6 @@ def process_paragraph_runs(p, replace_map, chapter_num=None, chapter_title=None)
 
     if has_unreplaced_tag:
         full_text = p_text
-        if clean_title and "[[章タイトル]]" in full_text:
-            full_text = full_text.replace("00 [[章タイトル]]", f"{chapter_num} {clean_title}")
-            full_text = full_text.replace("00[[章タイトル]]", f"{chapter_num} {clean_title}")
-            full_text = full_text.replace("[[章タイトル]]", clean_title)
         for tag, val in replace_map.items():
             if tag in full_text:
                 full_text = full_text.replace(tag, str(val))
@@ -283,7 +319,7 @@ def process_paragraph_runs(p, replace_map, chapter_num=None, chapter_title=None)
                 r.text = ""
 
 # ==========================================
-# スライド要素置換処理（単体数字テロップ削除機能付き）
+# スライド要素置換処理
 # ==========================================
 def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=None, assigned_files=None, captions=None):
     shapes_to_remove = []
@@ -500,9 +536,11 @@ if st.button("✨資料を生成する✨"):
                    - "step": 導入手順・運用フロー・タイムライン・実行ステップ（最大4ステップ）
                    - "checklist": 確認事項・必要書類・チェックリストなど
                    - "table": 料金プランや機能比較などのテキスト表
-                3. "step_descs" について:
+                3. "main_item" について:
+                   - 赤帯に配置する15文字以内の短いキャッチコピー（見出し）を指定してください。本文をそのまま入れないでください。
+                4. "step_descs" について:
                    - layout_type が "step" の場合、メモから具体的なアクションやステップを4つ抽出し、"step_descs" 配列に格納してください。
-                4. "chart_info" について:
+                5. "chart_info" について:
                    - メモ内に売上・件数・数値・月別などのデータがある場合は、必ず "chart_info" に "title", "categories", "series_name", "values" を格納してください。
 
                 【出力形式】
@@ -638,10 +676,8 @@ if st.button("✨資料を生成する✨"):
                     ch_slide = duplicate_slide_safe(prs, target_template_idx)
                     new_created_slides.append(ch_slide)
 
-                    # 主要項目の自動補完（空文字防止）
-                    main_item_text = ch.get("main_item", "").strip()
-                    if not main_item_text:
-                        main_item_text = "売上高は堅調に推移" if ("売上" in clean_ch_title or "推移" in clean_ch_title) else clean_ch_title
+                    # ★主要項目（赤帯）の自動長文制限＆スマート補完★
+                    main_item_text = sanitize_main_item(ch.get("main_item", ""), clean_ch_title)
 
                     # テキスト置換辞書
                     ch_map = {}
@@ -717,7 +753,7 @@ if st.button("✨資料を生成する✨"):
                         assigned_files=assigned_files, captions=captions
                     )
 
-                    # ★完全無比なグラフ追加（タイトルの被り100%防止・黄金比レイアウト）★
+                    # ★完全無比なグラフ追加（タイトルの被り防止・9pt小ぶりメイリオ指定）★
                     if should_draw_chart and chart_info:
                         categories = chart_info.get("categories", ["7月", "8月", "9月", "10月"])
                         series_name = str(chart_info.get("series_name", "売上高（万円）"))
@@ -750,10 +786,11 @@ if st.button("✨資料を生成する✨"):
                                 chart_shape = ch_slide.shapes.add_chart(c_type, x_pos, y_pos, cx_pos, cy_pos, chart_data)
                                 chart = chart_shape.chart
 
-                                # ★スライドタイトルがあるため、グラフ内部のタイトル枠は非表示（被り100%防止）★
+                                # ★スライドタイトルと被らないよう、グラフ内部タイトルはオフ★
                                 chart.has_title = False
 
-                                force_meiryo_on_chart(chart)
+                                # ★フォント名＝メイリオ、サイズ＝9pt小ぶり指定★
+                                force_meiryo_and_size_on_chart(chart, font_size_pt=9)
                                 chart_created = True  # 単一生成フラグ
                             except Exception:
                                 pass
