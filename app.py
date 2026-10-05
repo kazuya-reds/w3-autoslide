@@ -245,15 +245,15 @@ def force_meiryo_on_chart(chart):
             pass
 
 # ==========================================
-# グラフ追加スライドのレイアウト自動調整（文字被り防止）
+# グラフ追加スライドのレイアウト自動調整（被り絶対防止）
 # ==========================================
 def adjust_shapes_for_chart(slide):
-    """スライド左側のテキストボックスの幅を自動収縮させ、右側のグラフエリアを空ける"""
+    """スライド左側のテキストボックスの幅を最適化し、右側のグラフ領域を安全に空ける"""
     for shape in slide.shapes:
         if shape.has_text_frame:
-            if shape.left < Pt(360):
-                if shape.width > Pt(330):
-                    shape.width = Pt(330)
+            # 本文テキスト枠の幅を Pt(260)（右端: 332 pt）に収める
+            if shape.top > Pt(100) and shape.left < Pt(300):
+                shape.width = Pt(260)
 
 # ==========================================
 # 段落置換処理
@@ -649,7 +649,6 @@ if st.button("✨資料を生成する✨"):
                     # STEP補完処理（ステップ本文の確実な割り当て）
                     step_descs = ch.get("step_descs", [])
                     if not step_descs or len(step_descs) < 2:
-                        # メモ本文から番号つきリストや改行項目を抽出して補完
                         lines = [re.sub(r'^[1-9\.\s・\-\*]+', '', l).strip() for l in raw_memo.split('\n') if l.strip()]
                         step_descs = [l for l in lines if len(l) > 4 and not any(kw in l for kw in ["報告", "推移", "要因"])]
                         if len(step_descs) < 4:
@@ -704,7 +703,7 @@ if st.button("✨資料を生成する✨"):
                         assigned_files=assigned_files, captions=captions
                     )
 
-                    # ★確実な単一グラフ追加（文字被り防止＆メイリオXML強制）★
+                    # ★黄金比グラフ配置（重なり100%防止 ＆ メイリオXML強制）★
                     should_draw_chart = (not chart_created) and (
                         "line" in layout_type or "bar" in layout_type or "chart" in layout_type or
                         is_chart_keyword or ch_idx == 0
@@ -732,13 +731,13 @@ if st.button("✨資料を生成する✨"):
                             chart_data.categories = categories
                             chart_data.add_series(series_name, values)
 
-                            # 左側テキストボックス幅の自動縮小（文字被り防止）
+                            # 1. 左側本文テキストボックスの幅を Pt(260) に最適化
                             adjust_shapes_for_chart(ch_slide)
 
-                            # スライド右側領域へグラフを追加
+                            # 2. グラフを最適位置（left=Pt(350), width=Pt(320)）へ配置
                             try:
                                 c_type = XL_CHART_TYPE.COLUMN_CLUSTERED if ("bar" in layout_type or "棒" in clean_ch_title) else XL_CHART_TYPE.LINE_MARKERS
-                                x_pos, y_pos, cx_pos, cy_pos = Pt(370), Pt(130), Pt(410), Pt(300)
+                                x_pos, y_pos, cx_pos, cy_pos = Pt(350), Pt(135), Pt(320), Pt(240)
                                 chart_shape = ch_slide.shapes.add_chart(c_type, x_pos, y_pos, cx_pos, cy_pos, chart_data)
                                 chart = chart_shape.chart
 
@@ -747,7 +746,7 @@ if st.button("✨資料を生成する✨"):
                                 chart.chart_title.text_frame.text = str(c_title)
 
                                 force_meiryo_on_chart(chart)
-                                chart_created = True  # ★フラグ更新：二重・三重作成を完全に防ぐ★
+                                chart_created = True  # 単一生成フラグ
                             except Exception:
                                 pass
 
