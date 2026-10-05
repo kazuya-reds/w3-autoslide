@@ -245,27 +245,26 @@ def force_meiryo_on_chart(chart):
             pass
 
 # ==========================================
-# グラフ追加スライドのレイアウト自動調整（被り絶対防止）
+# グラフ追加スライドのレイアウト自動調整
 # ==========================================
 def adjust_shapes_for_chart(slide):
     """スライド左側のテキストボックスの幅を最適化し、右側のグラフ領域を安全に空ける"""
     for shape in slide.shapes:
         if shape.has_text_frame:
-            # 本文テキスト枠の幅を Pt(260)（右端: 332 pt）に収める
             if shape.top > Pt(100) and shape.left < Pt(300):
-                shape.width = Pt(260)
+                shape.width = Pt(270)
 
 # ==========================================
-# 段落置換処理
+# 段落置換処理（タイトルのスペース補正追加）
 # ==========================================
 def process_paragraph_runs(p, replace_map, chapter_num=None, chapter_title=None):
-    clean_title = chapter_title
-    if clean_title:
-        clean_title = re.sub(r'^\d+[\.\s_]*', '', str(clean_title)).strip()
+    clean_title = re.sub(r'^\d+[\.\s_]*', '', str(chapter_title)).strip() if chapter_title else ""
 
     for r in p.runs:
         if chapter_num and "00" in r.text:
-            r.text = r.text.replace("00", chapter_num)
+            r.text = r.text.replace("00 [[章タイトル]]", f"{chapter_num} {clean_title}")
+            r.text = r.text.replace("00[[章タイトル]]", f"{chapter_num} {clean_title}")
+            r.text = r.text.replace("00", f"{chapter_num} ")
         if clean_title and "[[章タイトル]]" in r.text:
             r.text = r.text.replace("[[章タイトル]]", clean_title)
         for tag, val in replace_map.items():
@@ -284,6 +283,8 @@ def process_paragraph_runs(p, replace_map, chapter_num=None, chapter_title=None)
     if has_unreplaced_tag:
         full_text = p_text
         if clean_title and "[[章タイトル]]" in full_text:
+            full_text = full_text.replace("00 [[章タイトル]]", f"{chapter_num} {clean_title}")
+            full_text = full_text.replace("00[[章タイトル]]", f"{chapter_num} {clean_title}")
             full_text = full_text.replace("[[章タイトル]]", clean_title)
         for tag, val in replace_map.items():
             if tag in full_text:
@@ -295,7 +296,7 @@ def process_paragraph_runs(p, replace_map, chapter_num=None, chapter_title=None)
                 r.text = ""
 
 # ==========================================
-# スライド要素置換処理
+# スライド要素置換処理（単体数字テロップ削除機能付き）
 # ==========================================
 def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=None, assigned_files=None, captions=None):
     shapes_to_remove = []
@@ -313,6 +314,16 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
     for shape in slide.shapes:
         sname_upper = shape.name.upper()
         raw_text = shape.text_frame.text if shape.has_text_frame else ""
+
+        # ★テンプレート固有の単体数字テロップ（2, 3, 4など）を自動消去★
+        if shape.has_text_frame:
+            txt = raw_text.strip()
+            if txt.isdigit() and len(txt) <= 2:
+                is_bottom_right = (shape.top > Pt(400) and shape.left > Pt(500))
+                is_placeholder = (shape.is_placeholder and shape.placeholder_format.type == PP_PLACEHOLDER.SLIDE_NUMBER)
+                if not is_bottom_right and not is_placeholder:
+                    shapes_to_remove.append(shape)
+                    continue
 
         if not has_notice:
             if "CAUTION" in sname_upper or "SUPPLEMENT" in sname_upper or "補足" in sname_upper or "注意" in sname_upper:
@@ -610,6 +621,11 @@ if st.button("✨資料を生成する✨"):
                     has_values = bool(chart_info and isinstance(chart_info.get("values"), list) and len(chart_info.get("values")) > 0)
                     is_chart_keyword = any(kw in clean_ch_title for kw in ["推移", "売上", "実績", "比較", "グラフ", "データ"])
 
+                    should_draw_chart = (not chart_created) and (
+                        "line" in layout_type or "bar" in layout_type or "chart" in layout_type or
+                        is_chart_keyword or ch_idx == 0
+                    )
+
                     # テンプレート上のソーススライド判定
                     target_template_idx = 2
                     if layout_type == "checklist" or "確認" in clean_ch_title or "チェック" in clean_ch_title:
@@ -639,8 +655,14 @@ if st.button("✨資料を生成する✨"):
                     ch_map = {}
                     ch_map["[[主要項目]]"] = ch.get("main_item", "")
                     ch_map["[[本文]]"] = ch.get("body", "")
-                    ch_map["[[補助項目]]"] = ch.get("sub_title", "実行ステップ")
-                    ch_map["[[補助項目の本文]]"] = ch.get("sub_body", ch.get("body", ""))
+
+                    # ★グラフを配置するスライドでは補助項目をクリアして左側をスッキリさせる★
+                    if should_draw_chart:
+                        ch_map["[[補助項目]]"] = ""
+                        ch_map["[[補助項目の本文]]"] = ""
+                    else:
+                        ch_map["[[補助項目]]"] = ch.get("sub_title", "実行ステップ")
+                        ch_map["[[補助項目の本文]]"] = ch.get("sub_body", ch.get("body", ""))
 
                     notice_val = clean_notice_text(ch.get("notice", ""))
                     ch_map["[[補足文]]"] = notice_val
@@ -703,12 +725,7 @@ if st.button("✨資料を生成する✨"):
                         assigned_files=assigned_files, captions=captions
                     )
 
-                    # ★黄金比グラフ配置（重なり100%防止 ＆ メイリオXML強制）★
-                    should_draw_chart = (not chart_created) and (
-                        "line" in layout_type or "bar" in layout_type or "chart" in layout_type or
-                        is_chart_keyword or ch_idx == 0
-                    )
-
+                    # ★完全無比なグラフ追加（重なり防止 ＆ メイリオXML強制）★
                     if should_draw_chart and chart_info:
                         categories = chart_info.get("categories", ["7月", "8月", "9月", "10月"])
                         series_name = str(chart_info.get("series_name", "売上高"))
@@ -731,13 +748,13 @@ if st.button("✨資料を生成する✨"):
                             chart_data.categories = categories
                             chart_data.add_series(series_name, values)
 
-                            # 1. 左側本文テキストボックスの幅を Pt(260) に最適化
+                            # 1. 左側本文テキストボックスの幅を Pt(270) に最適化
                             adjust_shapes_for_chart(ch_slide)
 
-                            # 2. グラフを最適位置（left=Pt(350), width=Pt(320)）へ配置
+                            # 2. グラフを最適位置（left=Pt(340), top=Pt(130), width=Pt(340), height=Pt(260)）へ配置
                             try:
                                 c_type = XL_CHART_TYPE.COLUMN_CLUSTERED if ("bar" in layout_type or "棒" in clean_ch_title) else XL_CHART_TYPE.LINE_MARKERS
-                                x_pos, y_pos, cx_pos, cy_pos = Pt(350), Pt(135), Pt(320), Pt(240)
+                                x_pos, y_pos, cx_pos, cy_pos = Pt(340), Pt(130), Pt(340), Pt(260)
                                 chart_shape = ch_slide.shapes.add_chart(c_type, x_pos, y_pos, cx_pos, cy_pos, chart_data)
                                 chart = chart_shape.chart
 
