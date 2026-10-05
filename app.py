@@ -279,14 +279,16 @@ def force_meiryo_and_size_on_chart(chart, font_size_pt=9):
             pass
 
 # ==========================================
-# グラフ追加スライドのレイアウト自動調整（赤帯コンパクト化）
+# グラフ追加スライドのレイアウト自動調整（赤縦線保護 ＆ 本文幅制限）
 # ==========================================
 def adjust_shapes_for_chart(slide):
-    """スライド左側のテキストボックスの幅を Pt(200) にコンパクト化し、赤帯の無駄な伸びを抑える"""
+    """赤い縦線バー (SECTION_LINE) の幅 4pt は完全保護し、本文テキスト枠のみ幅 220pt に収める"""
     for shape in slide.shapes:
-        if shape.has_text_frame:
-            if shape.top > Pt(80) and shape.left < Pt(300):
-                shape.width = Pt(200)
+        if "SECTION_LINE" in shape.name or "LINE" in shape.name.upper():
+            shape.width = Pt(4.0)
+            shape.height = Pt(19.3)
+        elif shape.has_text_frame and shape.top > Pt(80) and Pt(100) <= shape.left < Pt(350):
+            shape.width = Pt(220)
 
 # ==========================================
 # 段落置換処理
@@ -753,7 +755,7 @@ if st.button("✨資料を生成する✨"):
                         assigned_files=assigned_files, captions=captions
                     )
 
-                    # ★完全無比なグラフ追加（ゆったりレイアウト：left=390pt / マージン=118pt）★
+                    # ★完全無比なグラフ追加（他ページと同幅の赤縦線保護 ＆ ゆったりマージン）★
                     if should_draw_chart and chart_info:
                         categories = chart_info.get("categories", ["7月", "8月", "9月", "10月"])
                         series_name = str(chart_info.get("series_name", "売上高（万円）"))
@@ -776,13 +778,13 @@ if st.button("✨資料を生成する✨"):
                             chart_data.categories = categories
                             chart_data.add_series(series_name, values)
 
-                            # 1. 左側本文テキストボックスの幅を Pt(200) にコンパクト化（赤帯短縮）
+                            # 1. 赤縦線(SECTION_LINE)の幅 4pt は保護し、本文枠のみ Pt(220) に最適化
                             adjust_shapes_for_chart(ch_slide)
 
-                            # 2. グラフを右（left=Pt(390), top=Pt(145), width=Pt(280), height=Pt(250)）へ配置
+                            # 2. グラフを右（left=Pt(380), top=Pt(135), width=Pt(290), height=Pt(260)）へ配置
                             try:
                                 c_type = XL_CHART_TYPE.COLUMN_CLUSTERED if ("bar" in layout_type or "棒" in clean_ch_title) else XL_CHART_TYPE.LINE_MARKERS
-                                x_pos, y_pos, cx_pos, cy_pos = Pt(390), Pt(145), Pt(280), Pt(250)
+                                x_pos, y_pos, cx_pos, cy_pos = Pt(380), Pt(135), Pt(290), Pt(260)
                                 chart_shape = ch_slide.shapes.add_chart(c_type, x_pos, y_pos, cx_pos, cy_pos, chart_data)
                                 chart = chart_shape.chart
 
