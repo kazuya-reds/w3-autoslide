@@ -54,29 +54,34 @@ st.image("logo.png", width=350)
 st.caption("AI資料 自動生成システム（プレビュー＆自動調整機能付き）")
 
 # ==========================================
-# API呼び出し用リトライヘルパー（429/503対策）
+# API呼び出し用リトライ ＆ 自動フォールバックエンジン（503/429対策）
 # ==========================================
 def call_gemini_with_retry(client, prompt, max_retries=3):
-    for attempt in range(max_retries):
-        try:
-            response = client.models.generate_content(
-                model='gemini-3.6-flash',
-                contents=prompt
-            )
-            return response.text.strip()
-        except Exception as e:
-            err_str = str(e)
-            if ("429" in err_str or "RESOURCE_EXHAUSTED" in err_str) and attempt < max_retries - 1:
-                match = re.search(r'retry in ([0-9\.]+)s', err_str)
-                wait_sec = int(float(match.group(1))) + 2 if match else 60
-                st.warning(f"⏳ API利用制限に達しました。{wait_sec}秒待機後に自動再試行します... ({attempt + 1}/{max_retries})")
-                time.sleep(wait_sec)
-            elif ("503" in err_str or "UNAVAILABLE" in err_str or "high demand" in err_str) and attempt < max_retries - 1:
-                wait_sec = 5
-                st.warning(f"⚠️ API高負荷のため待機中... ({attempt + 1}/{max_retries})")
-                time.sleep(wait_sec)
-            else:
-                raise e
+    """混雑（503）発生時に自動で予備モデルへ切り替えて確実に成功させるロジック"""
+    candidate_models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']
+    last_exception = None
+
+    for model_name in candidate_models:
+        for attempt in range(max_retries):
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt
+                )
+                if response and response.text:
+                    return response.text.strip()
+            except Exception as e:
+                last_exception = e
+                err_str = str(e)
+                if "503" in err_str or "UNAVAILABLE" in err_str or "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                    wait_sec = 2 * (attempt + 1)
+                    st.warning(f"⚠️ AIサーバー混雑を検知 ({model_name})。{wait_sec}秒後に自動リトライ中... ({attempt + 1}/{max_retries})")
+                    time.sleep(wait_sec)
+                else:
+                    break
+        st.info(f"🔄 代替モデル ({model_name} ➔ 次のモデル) へ自動切り替えて処理を継続します...")
+
+    raise last_exception if last_exception else Exception("すべてのAIモデルが混雑中のため、少し時間を置いてお試しください。")
 
 # ==========================================
 # クリーニング ＆ サニタイズ
@@ -338,7 +343,7 @@ def process_paragraph_runs(p, replace_map, chapter_num=None, chapter_title=None)
             for r in p.runs[1:]:
                 r.text = ""
 
-    # ★機能③: 本文テキストの文字数に応じた自動フォントサイズ調整★
+    # 本文テキストの文字数に応じた自動フォントサイズ調整
     if p_text and len(p_text.strip()) > 30 and not any(tag in p_text for tag in ["[[章タイトル]]", "STEP", "P1", "P2"]):
         auto_fit_font_size(p, p_text, base_size_pt=14, min_size_pt=9.5)
 
@@ -362,7 +367,6 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
         sname_upper = shape.name.upper()
         raw_text = shape.text_frame.text if shape.has_text_frame else ""
 
-        # 単体数字テロップ（2, 3, 4など）を自動消去
         if shape.has_text_frame:
             txt = raw_text.strip()
             if txt.isdigit() and len(txt) <= 2:
@@ -589,11 +593,16 @@ with col_btn1:
                     st.session_state["analyzed"] = True
                     st.success("✅ AIの構成解析が完了しました！下部の編集フォームでテキストや数値を微調整できます。")
                 except Exception as e:
-                    st.error(f"解析中にエラーが発生しました: {e}")
-
+                    err_msg = str(e)
+                    if "503" in err_msg or "UNAVAILABLE" in err_msg:
+                        st.error("【サーバー混雑中】現在AIサーバーへのアクセスが集中しています。恐れ入りますが1〜2分待ってから再度お試しください。")
+                    elif "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
+                        st.error("【利用制限】1分あたりの利用上限に達しました。少し待ってから再度お試しください。")
+                    else:
+                        st.error(f"解析中にエラーが発生しました: {e}")
 
 # ==========================================
-# 機能①: 【生成前のプレビュー ＆ WEB編集フォーム】
+# 機能①: WEB編集フォーム ＆ 最終生成
 # ==========================================
 if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state:
     st.subheader("✏️ AI解析結果のプレビュー ＆ WEB編集フォーム")
@@ -620,7 +629,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 e_sub_title = st.text_input(f"補助項目 タイトル", value=ch.get("sub_title", ""), key=f"sub_t_{idx}")
                 e_sub_body = st.text_area(f"補助項目 本文", value=ch.get("sub_body", ""), height=68, key=f"sub_b_{idx}")
 
-            # STEP・グラフ用編集フィールド
             if e_layout == "step":
                 st.markdown("**ステップ詳細（最大4ステップ）**")
                 s_descs = ch.get("step_descs", [])
@@ -634,7 +642,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
             else:
                 e_s_descs = ch.get("step_descs", [])
 
-            # グラフ編集
             c_info = ch.get("chart_info") or extract_chart_data_from_memo(raw_memo)
             if e_layout in ["line_chart", "bar_chart"] or idx == 0:
                 st.markdown("**📊 グラフデータ設定**")
@@ -663,7 +670,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
             else:
                 edited_c_info = c_info
 
-            # 構成オブジェクトを保持
             edited_chapters.append({
                 "chapter_title": e_title,
                 "layout_type": e_layout,
@@ -681,7 +687,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
 
     st.markdown("---")
     
-    # メイン生成ボタン
     st.markdown('<div class="main-btn">', unsafe_allow_html=True)
     if st.button("✨ この内容で PowerPoint 資料を自動生成する ✨", use_container_width=True):
         status_box = st.empty()
@@ -712,7 +717,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 today_str = datetime.date.today().strftime("%Y/%m/%d")
                 new_created_slides = []
 
-                # 1. 表紙スライド（インデックス0）
+                # 1. 表紙スライド
                 cover_slide = duplicate_slide_safe(prs, 0)
                 cover_map = {
                     "[[資料タイトル]]": doc_title,
@@ -723,7 +728,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 process_slide_shapes(cover_slide, cover_map)
                 new_created_slides.append(cover_slide)
 
-                # 2. INDEX（目次）スライド（インデックス1）
+                # 2. INDEX（目次）スライド
                 index_slide = duplicate_slide_safe(prs, 1)
                 index_map = {}
                 for ch_idx, ch in enumerate(edited_chapters):
@@ -744,7 +749,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 process_slide_shapes(index_slide, index_map)
                 new_created_slides.append(index_slide)
 
-                # グラフ生成フラグ
                 chart_created = False
 
                 # 3. 各章スライド構築
@@ -821,7 +825,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         assigned_files=assigned_files, captions=captions
                     )
 
-                    # グラフ描画（同幅の赤縦線保護 ＆ ゆったりマージン）
                     if should_draw_chart and chart_info:
                         categories = chart_info.get("categories", ["7月", "8月", "9月", "10月"])
                         series_name = str(chart_info.get("series_name", "売上高（万円）"))
