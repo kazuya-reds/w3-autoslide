@@ -51,7 +51,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.image("logo.png", width=350)
-st.caption("AI資料 自動生成システム（プレビュー＆自動調整機能付き）")
+st.caption("AI資料 自動生成システム")
 
 # ==========================================
 # API呼び出し用リトライエンジン（503/429混雑対策）
