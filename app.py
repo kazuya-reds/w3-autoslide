@@ -54,34 +54,32 @@ st.image("logo.png", width=350)
 st.caption("AI資料 自動生成システム（プレビュー＆自動調整機能付き）")
 
 # ==========================================
-# API呼び出し用リトライ ＆ 自動フォールバックエンジン（503/429対策）
+# API呼び出し用リトライエンジン（503/429混雑対策）
 # ==========================================
-def call_gemini_with_retry(client, prompt, max_retries=3):
-    """混雑（503）発生時に自動で予備モデルへ切り替えて確実に成功させるロジック"""
-    candidate_models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']
+def call_gemini_with_retry(client, prompt, max_retries=5):
+    """混雑（503/429）発生時に数秒待機して自動リトライする安全ロジック"""
+    model_name = 'gemini-3.6-flash'
     last_exception = None
 
-    for model_name in candidate_models:
-        for attempt in range(max_retries):
-            try:
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=prompt
-                )
-                if response and response.text:
-                    return response.text.strip()
-            except Exception as e:
-                last_exception = e
-                err_str = str(e)
-                if "503" in err_str or "UNAVAILABLE" in err_str or "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                    wait_sec = 2 * (attempt + 1)
-                    st.warning(f"⚠️ AIサーバー混雑を検知 ({model_name})。{wait_sec}秒後に自動リトライ中... ({attempt + 1}/{max_retries})")
-                    time.sleep(wait_sec)
-                else:
-                    break
-        st.info(f"🔄 代替モデル ({model_name} ➔ 次のモデル) へ自動切り替えて処理を継続します...")
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt
+            )
+            if response and response.text:
+                return response.text.strip()
+        except Exception as e:
+            last_exception = e
+            err_str = str(e)
+            if "503" in err_str or "UNAVAILABLE" in err_str or "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                wait_sec = 3 * (attempt + 1)
+                st.warning(f"⏳ AIサーバー混雑を検知。{wait_sec}秒後に自動再試行します... ({attempt + 1}/{max_retries})")
+                time.sleep(wait_sec)
+            else:
+                raise e
 
-    raise last_exception if last_exception else Exception("すべてのAIモデルが混雑中のため、少し時間を置いてお試しください。")
+    raise last_exception if last_exception else Exception("AIサーバーの混雑が続いています。1〜2分置かれてから再度お試しください。")
 
 # ==========================================
 # クリーニング ＆ サニタイズ
