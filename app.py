@@ -3,6 +3,7 @@ from google import genai
 from pptx import Presentation
 from pptx.util import Pt
 from pptx.dml.color import RGBColor
+from pptx.enum.text import MSO_ANCHOR
 from pptx.chart.data import CategoryChartData
 from pptx.enum.shapes import PP_PLACEHOLDER
 from pptx.enum.chart import XL_CHART_TYPE
@@ -20,7 +21,7 @@ import unicodedata
 
 st.set_page_config(page_title="W3 AutoSlide", layout="wide")
 
-# カスタムCSS（デザイン調整・赤色太字ボタン定義）
+# カスタムCSS（デザイン調整・赤色太字ボタン強固指定）
 st.markdown("""
     <style>
     img {
@@ -31,8 +32,8 @@ st.markdown("""
         border-radius: 8px !important;
         font-size: 16px !important;
     }
-    /* メイン生成ボタンの赤色・太字カスタム */
-    div.element-container:has(button[key="generate_pptx_btn"]) button {
+    /* Primaryボタン（メイン生成ボタン）を強固に赤背景・太字白文字へ装飾 */
+    button[data-testid="baseButton-primary"] {
         background-color: #ff4b4b !important;
         color: #ffffff !important;
         font-weight: bold !important;
@@ -40,9 +41,9 @@ st.markdown("""
         padding: 12px 28px !important;
         border: none !important;
         border-radius: 8px !important;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1) !important;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.15) !important;
     }
-    div.element-container:has(button[key="generate_pptx_btn"]) button:hover {
+    button[data-testid="baseButton-primary"]:hover {
         background-color: #d93025 !important;
         color: #ffffff !important;
     }
@@ -132,7 +133,6 @@ def auto_fit_font_size_and_spacing(paragraph, text, min_size_pt=9.5):
     char_count = len(text.strip())
     line_count = text.count('\n') + 1
 
-    # 文字数・改行数に応じた動的スケーリング
     if char_count < 50 and line_count <= 2:
         target_size = 18.0
         space_after = Pt(14)
@@ -276,7 +276,6 @@ def ensure_page_number(slide, page_num):
 # グラフフォント（メイリオ ＋ 赤テーマ色 ＋ タイトル反映）XMLレベル適用
 # ==========================================
 def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
-    # 1. グラフタイトルのメイリオ 11pt 化
     if chart.has_title and chart.chart_title.text_frame:
         for p in chart.chart_title.text_frame.paragraphs:
             p.font.name = "メイリオ"
@@ -286,13 +285,12 @@ def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
                 run.font.size = Pt(11)
                 rPr = run._r.get_or_add_rPr()
                 rPr.attrib['sz'] = '1100'
-                for child in list(rPr):
+                for child in list(defRPr if 'defRPr' in locals() else rPr):
                     if child.tag.endswith('ea') or child.tag.endswith('latin'):
                         rPr.remove(child)
                 rPr.append(parse_xml(f'<a:ea {nsdecls("a")} typeface="メイリオ"/>'))
                 rPr.append(parse_xml(f'<a:latin {nsdecls("a")} typeface="Meiryo"/>'))
 
-    # 2. X軸・Y軸のフォント設定
     for axis in [getattr(chart, 'category_axis', None), getattr(chart, 'value_axis', None)]:
         if axis and hasattr(axis, 'tick_labels'):
             try:
@@ -312,7 +310,6 @@ def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
             except Exception:
                 pass
 
-    # 3. 凡例のフォント設定
     if chart.has_legend and chart.legend:
         try:
             chart.legend.font.name = "メイリオ"
@@ -328,36 +325,85 @@ def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
             pass
 
 # ==========================================
-# グラフ追加スライドのレイアウト自動調整
+# 要素位置・揃え自動整列エンジン（見出し赤棒＆STEPアイコン完璧揃え）
 # ==========================================
-def adjust_shapes_for_chart(slide):
+def align_shape_positions(slide):
+    """主要見出し前の赤棒、補助項目前の四角/赤棒、STEPアイコンの位置をテキストと文字位置に合わせてピッタリ揃える"""
+    main_title_shape = None
+    step_texts = {}
+    step_badges = {}
+
     for shape in slide.shapes:
-        if "SECTION_LINE" in shape.name or "LINE" in shape.name.upper():
-            shape.width = Pt(4.0)
-            shape.height = Pt(19.3)
-        elif shape.has_text_frame and shape.top > Pt(80) and Pt(100) <= shape.left < Pt(350):
+        sname = shape.name.upper()
+        if "MAIN_SECTION_TITLE" in sname:
+            main_title_shape = shape
+        
+        for k in range(1, 5):
+            if f"STEP_{k}_TEXT" in sname:
+                step_texts[k] = shape
+            elif f"STEP_{k}_BADGE" in sname:
+                step_badges[k] = shape
+
+    # 1. 主要見出し前の赤棒 (SECTION_LINE) の位置補正
+    for shape in slide.shapes:
+        if "SECTION_LINE" in shape.name or ("LINE" in shape.name.upper() and shape.shape_type == 1):
+            if main_title_shape:
+                shape.top = int(main_title_shape.top + Pt(2.0))
+                shape.height = Pt(19.3)
+                shape.width = Pt(4.0)
+
+    # 2. STEPバッジとSTEPテキストの垂直中央位置合わせ
+    for k in range(1, 5):
+        if k in step_badges and k in step_texts:
+            badge = step_badges[k]
+            text_shp = step_texts[k]
+            
+            if badge.has_text_frame:
+                badge.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
+                badge.text_frame.margin_top = Pt(1.0)
+                badge.text_frame.margin_bottom = Pt(1.0)
+            
+            if text_shp.has_text_frame:
+                text_shp.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
+                text_shp.text_frame.margin_top = Pt(1.0)
+                text_shp.text_frame.margin_bottom = Pt(1.0)
+
+            badge.height = Pt(16.0)
+            badge.top = int(text_shp.top + (text_shp.height - badge.height) / 2)
+
+def adjust_shapes_for_chart(slide):
+    align_shape_positions(slide)
+    for shape in slide.shapes:
+        if shape.has_text_frame and shape.top > Pt(80) and Pt(100) <= shape.left < Pt(350):
             shape.width = Pt(220)
 
 # ==========================================
-# タイトル段落の番号保持・確実置換
+# タイトル段落の番号赤色化 ＆ タイトルフォントサイズ完全保持
 # ==========================================
 def format_chapter_title_paragraph(p, ch_num, ch_title):
+    """タイトルの先頭番号（01等）のみ赤色にし、タイトル文字・サイズは元のテンプレートまま100%維持"""
     clean_title = re.sub(r'^\d+[\.\s_]*', '', str(ch_title)).strip() if ch_title else ""
-    full_text = p.text
-    if "00" in full_text or "[[章タイトル]]" in full_text:
-        new_text = full_text
-        new_text = re.sub(r'00\s*\[\[章タイトル\]\]', f"{ch_num} {clean_title}", new_text)
-        new_text = re.sub(r'\[\[章タイトル\]\]', clean_title, new_text)
-        new_text = re.sub(r'\b00\b', ch_num, new_text)
-        if not new_text.startswith(ch_num):
-            new_text = f"{ch_num} {new_text}"
+    
+    base_font_name = None
+    base_font_size = None
+    if len(p.runs) > 0 and p.runs[0].font:
+        base_font_name = p.runs[0].font.name
+        base_font_size = p.runs[0].font.size
 
-        if len(p.runs) > 0:
-            p.runs[0].text = new_text
-            for r in p.runs[1:]:
-                r.text = ""
-        else:
-            p.text = new_text
+    p.text = ""
+    
+    # Run 0: 章番号（赤色）
+    r0 = p.add_run()
+    r0.text = f"{ch_num} "
+    r0.font.color.rgb = RGBColor(217, 48, 37)
+    if base_font_name: r0.font.name = base_font_name
+    if base_font_size: r0.font.size = base_font_size
+
+    # Run 1: タイトル文字列（標準黒）
+    r1 = p.add_run()
+    r1.text = clean_title
+    if base_font_name: r1.font.name = base_font_name
+    if base_font_size: r1.font.size = base_font_size
 
 # ==========================================
 # 段落置換処理（可変フォントサイズ＆行間調整付き）
@@ -365,6 +411,7 @@ def format_chapter_title_paragraph(p, ch_num, ch_title):
 def process_paragraph_runs(p, replace_map, chapter_num=None, chapter_title=None):
     if "00" in p.text or "[[章タイトル]]" in p.text:
         format_chapter_title_paragraph(p, chapter_num if chapter_num else "01", chapter_title)
+        return
 
     for r in p.runs:
         for tag, val in replace_map.items():
@@ -408,6 +455,9 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
 
     body_val = replace_map.get("[[本文]]", "")
     has_body = bool(body_val and str(body_val).strip())
+
+    # 要素整列の実行
+    align_shape_positions(slide)
 
     for shape in slide.shapes:
         sname_upper = shape.name.upper()
@@ -667,7 +717,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 e_body = st.text_area(f"スライド{idx+1} 本文", value=ch.get("body", ""), height=100, key=f"body_{idx}")
 
             with ec_cols2:
-                # 日本語表示のレイアウト選択ドロップダウン
                 current_layout_key = str(ch.get("layout_type", "text")).lower()
                 current_label = LAYOUT_MAP.get(current_layout_key, LAYOUT_MAP["text"])
                 labels_list = list(LAYOUT_MAP.values())
@@ -737,8 +786,8 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
 
     st.markdown("---")
     
-    # 赤色太字カスタムボタン
-    if st.button("✨ この内容で PowerPoint 資料を自動生成する ✨", key="generate_pptx_btn", use_container_width=True):
+    # 赤色太字カスタムボタン (type="primary" で強固に指定)
+    if st.button("✨ この内容で PowerPoint 資料を自動生成する ✨", key="generate_pptx_btn", type="primary", use_container_width=True):
         status_box = st.empty()
         with st.spinner("WEB編集結果を元にPowerPoint資料を構築中..."):
             try:
@@ -767,7 +816,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 today_str = datetime.date.today().strftime("%Y/%m/%d")
                 new_created_slides = []
 
-                # 1. 表紙スライド
+                # 1. 表紙スライド（バランス100%維持）
                 cover_slide = duplicate_slide_safe(prs, 0)
                 cover_map = {
                     "[[資料タイトル]]": doc_title,
@@ -906,12 +955,10 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                                 chart_shape = ch_slide.shapes.add_chart(c_type, x_pos, y_pos, cx_pos, cy_pos, chart_data)
                                 chart = chart_shape.chart
 
-                                # ★グラフタイトル有効化＆セット★
                                 chart.has_title = True
                                 g_title_text = str(chart_info.get("title", f"{clean_ch_title}"))
                                 chart.chart_title.text_frame.text = g_title_text
 
-                                # ★データ系列の赤色化（RGB: 217, 48, 37）★
                                 for s in chart.series:
                                     s.format.line.color.rgb = RGBColor(217, 48, 37)
                                     s.format.line.width = Pt(2.5)
