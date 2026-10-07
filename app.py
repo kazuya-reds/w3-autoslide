@@ -21,7 +21,7 @@ import unicodedata
 
 st.set_page_config(page_title="W3 AutoSlide", layout="wide")
 
-# カスタムCSS（デザイン調整・赤色太字ボタン強固指定）
+# カスタムCSS（赤色太字ボタン強固指定）
 st.markdown("""
     <style>
     img {
@@ -33,7 +33,7 @@ st.markdown("""
         font-size: 16px !important;
     }
     /* Primaryボタン（メイン生成ボタン）を強固に赤背景・太字白文字へ装飾 */
-    button[data-testid="baseButton-primary"] {
+    button[data-testid="baseButton-primary"], div.stButton > button[kind="primary"] {
         background-color: #ff4b4b !important;
         color: #ffffff !important;
         font-weight: bold !important;
@@ -43,7 +43,7 @@ st.markdown("""
         border-radius: 8px !important;
         box-shadow: 0 4px 6px rgba(0,0,0,0.15) !important;
     }
-    button[data-testid="baseButton-primary"]:hover {
+    button[data-testid="baseButton-primary"]:hover, div.stButton > button[kind="primary"]:hover {
         background-color: #d93025 !important;
         color: #ffffff !important;
     }
@@ -75,7 +75,6 @@ LAYOUT_REVERSE_MAP = {v: k for k, v in LAYOUT_MAP.items()}
 # API呼び出し用リトライエンジン（503/429混雑対策）
 # ==========================================
 def call_gemini_with_retry(client, prompt, max_retries=5):
-    """混雑（503/429）発生時に数秒待機して自動リトライする安全ロジック"""
     model_name = 'gemini-3.6-flash'
     last_exception = None
 
@@ -108,7 +107,6 @@ def clean_notice_text(text):
     return re.sub(r'^(?:[※\*\:\s]|注意[：:]|注[：:])+', '', str(text).strip())
 
 def sanitize_main_item(main_item, clean_ch_title):
-    """主要項目（赤帯）が15文字を超える長文の場合、自動的に短縮"""
     main_item = str(main_item).strip() if main_item else ""
     if not main_item or len(main_item) > 18 or "。" in main_item or "、" in main_item:
         first_part = re.split(r'[。\n、,]', main_item)[0].strip()
@@ -126,7 +124,7 @@ def sanitize_main_item(main_item, clean_ch_title):
     return main_item
 
 # ==========================================
-# 自動フォントサイズ＆間隔調整エンジン（スカスカ感防止＆文字溢れ防止）
+# 自動フォントサイズ＆間隔調整エンジン
 # ==========================================
 def auto_fit_font_size_and_spacing(paragraph, text, min_size_pt=9.5):
     """文字数が少ないときは大きく（スカスカ防止）、多いときは自動縮小（文字溢れ防止）"""
@@ -273,7 +271,7 @@ def ensure_page_number(slide, page_num):
         p.font.size = Pt(12)
 
 # ==========================================
-# グラフフォント（メイリオ ＋ 赤テーマ色 ＋ タイトル反映）XMLレベル適用
+# グラフフォント（メイリオ ＋ 赤テーマ色 ＋ タイトル反映）
 # ==========================================
 def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
     if chart.has_title and chart.chart_title.text_frame:
@@ -285,7 +283,7 @@ def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
                 run.font.size = Pt(11)
                 rPr = run._r.get_or_add_rPr()
                 rPr.attrib['sz'] = '1100'
-                for child in list(defRPr if 'defRPr' in locals() else rPr):
+                for child in list(rPr):
                     if child.tag.endswith('ea') or child.tag.endswith('latin'):
                         rPr.remove(child)
                 rPr.append(parse_xml(f'<a:ea {nsdecls("a")} typeface="メイリオ"/>'))
@@ -325,10 +323,10 @@ def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
             pass
 
 # ==========================================
-# 要素位置・揃え自動整列エンジン（見出し赤棒＆STEPアイコン完璧揃え）
+# 要素位置・揃え自動整列エンジン（見出し赤棒・STEPアイコン・被り自動解消）
 # ==========================================
 def align_shape_positions(slide):
-    """主要見出し前の赤棒、補助項目前の四角/赤棒、STEPアイコンの位置をテキストと文字位置に合わせてピッタリ揃える"""
+    """主要見出し前の赤棒、補助項目の四角、STEPアイコン、被り解消の完璧調整"""
     main_title_shape = None
     step_texts = {}
     step_badges = {}
@@ -344,16 +342,24 @@ def align_shape_positions(slide):
             elif f"STEP_{k}_BADGE" in sname:
                 step_badges[k] = shape
 
-    # 1. 主要見出し前の赤棒 (SECTION_LINE) の位置補正
+    # 1. 主要見出し前の赤棒 (SECTION_LINE) の位置と幅（4pt）をテキスト高さにピッタリ同期
     for shape in slide.shapes:
         if "SECTION_LINE" in shape.name or ("LINE" in shape.name.upper() and shape.shape_type == 1):
+            shape.width = Pt(4.0)
+            shape.height = Pt(19.3)
             if main_title_shape:
-                shape.top = int(main_title_shape.top + Pt(2.0))
-                shape.height = Pt(19.3)
-                shape.width = Pt(4.0)
+                shape.top = int(main_title_shape.top + Pt(3.5))
 
-    # 2. STEPバッジとSTEPテキストの垂直中央位置合わせ
+    # 2. STEPバッジとSTEPテキストの垂直中央ライン・フォントサイズ完全統一（13.5pt）
     for k in range(1, 5):
+        if k in step_texts:
+            text_shp = step_texts[k]
+            if text_shp.has_text_frame:
+                for p in text_shp.text_frame.paragraphs:
+                    p.font.size = Pt(13.5)
+                    for r in p.runs:
+                        r.font.size = Pt(13.5)
+
         if k in step_badges and k in step_texts:
             badge = step_badges[k]
             text_shp = step_texts[k]
@@ -370,6 +376,15 @@ def align_shape_positions(slide):
 
             badge.height = Pt(16.0)
             badge.top = int(text_shp.top + (text_shp.height - badge.height) / 2)
+
+    # 3. STEPスライド下部（SECTION_TITLE, BODY_TEXT）の文字被り退避・解消
+    if len(step_texts) > 0:
+        for shape in slide.shapes:
+            sname = shape.name.upper()
+            if "SECTION_TITLE" in sname and "MAIN" not in sname:
+                shape.top = Pt(340)
+            elif "BODY_TEXT" in sname and "MAIN" not in sname:
+                shape.top = Pt(368)
 
 def adjust_shapes_for_chart(slide):
     align_shape_positions(slide)
@@ -399,7 +414,7 @@ def format_chapter_title_paragraph(p, ch_num, ch_title):
     if base_font_name: r0.font.name = base_font_name
     if base_font_size: r0.font.size = base_font_size
 
-    # Run 1: タイトル文字列（標準黒）
+    # Run 1: タイトル文字列（標準色）
     r1 = p.add_run()
     r1.text = clean_title
     if base_font_name: r1.font.name = base_font_name
@@ -408,7 +423,7 @@ def format_chapter_title_paragraph(p, ch_num, ch_title):
 # ==========================================
 # 段落置換処理（可変フォントサイズ＆行間調整付き）
 # ==========================================
-def process_paragraph_runs(p, replace_map, chapter_num=None, chapter_title=None):
+def process_paragraph_runs(p, replace_map, chapter_num=None, chapter_title=None, is_cover=False):
     if "00" in p.text or "[[章タイトル]]" in p.text:
         format_chapter_title_paragraph(p, chapter_num if chapter_num else "01", chapter_title)
         return
@@ -436,14 +451,15 @@ def process_paragraph_runs(p, replace_map, chapter_num=None, chapter_title=None)
             for r in p.runs[1:]:
                 r.text = ""
 
-    # 本文テキストのスカスカ感防止＆文字溢れ自動調整
-    if p_text and len(p_text.strip()) > 5 and not any(tag in p_text for tag in ["[[章タイトル]]", "STEP", "P1", "P2"]):
-        auto_fit_font_size_and_spacing(p, p_text, min_size_pt=9.5)
+    # 表紙スライド・STEP項目以外の本文テキストについてのみスカスカ感防止＆自動調整を適用
+    if not is_cover and p_text and len(p_text.strip()) > 5:
+        if not any(tag in p_text for tag in ["[[章タイトル]]", "STEP", "P1", "P2"]):
+            auto_fit_font_size_and_spacing(p, p_text, min_size_pt=9.5)
 
 # ==========================================
 # スライド要素置換処理
 # ==========================================
-def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=None, assigned_files=None, captions=None):
+def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=None, assigned_files=None, captions=None, is_cover=False):
     shapes_to_remove = []
     has_assigned = assigned_files is not None and len(assigned_files) > 0
 
@@ -457,7 +473,8 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
     has_body = bool(body_val and str(body_val).strip())
 
     # 要素整列の実行
-    align_shape_positions(slide)
+    if not is_cover:
+        align_shape_positions(slide)
 
     for shape in slide.shapes:
         sname_upper = shape.name.upper()
@@ -544,12 +561,12 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
                         if tag_k in p.text and replace_map.get(tag_k, "").strip() == "":
                             p.text = ""
 
-                process_paragraph_runs(p, replace_map, chapter_num, chapter_title)
+                process_paragraph_runs(p, replace_map, chapter_num, chapter_title, is_cover=is_cover)
 
         if shape.has_table:
             for cell in shape.table.iter_cells():
                 for p in cell.text_frame.paragraphs:
-                    process_paragraph_runs(p, replace_map)
+                    process_paragraph_runs(p, replace_map, is_cover=is_cover)
 
     for shp in shapes_to_remove:
         try:
@@ -786,7 +803,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
 
     st.markdown("---")
     
-    # 赤色太字カスタムボタン (type="primary" で強固に指定)
+    # 赤色太字カスタムボタン（type="primary" で強固指定）
     if st.button("✨ この内容で PowerPoint 資料を自動生成する ✨", key="generate_pptx_btn", type="primary", use_container_width=True):
         status_box = st.empty()
         with st.spinner("WEB編集結果を元にPowerPoint資料を構築中..."):
@@ -816,7 +833,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 today_str = datetime.date.today().strftime("%Y/%m/%d")
                 new_created_slides = []
 
-                # 1. 表紙スライド（バランス100%維持）
+                # 1. 表紙スライド（バランス・サイズ100%完全保持）
                 cover_slide = duplicate_slide_safe(prs, 0)
                 cover_map = {
                     "[[資料タイトル]]": doc_title,
@@ -824,7 +841,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     "[[バージョン]]": "1.0",
                     "[[更新日]]": today_str
                 }
-                process_slide_shapes(cover_slide, cover_map)
+                process_slide_shapes(cover_slide, cover_map, is_cover=True)
                 new_created_slides.append(cover_slide)
 
                 # 2. INDEX（目次）スライド
@@ -924,7 +941,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         assigned_files=assigned_files, captions=captions
                     )
 
-                    # グラフ描画（タイトル反映 ＋ テーマ赤色化 ＋ 9pt指定）
                     if should_draw_chart and chart_info:
                         categories = chart_info.get("categories", ["7月", "8月", "9月", "10月"])
                         series_name = str(chart_info.get("series_name", "売上高（万円）"))
