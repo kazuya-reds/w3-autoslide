@@ -127,7 +127,6 @@ def sanitize_main_item(main_item, clean_ch_title):
 # 自動フォントサイズ＆間隔調整エンジン
 # ==========================================
 def auto_fit_font_size_and_spacing(paragraph, text, min_size_pt=9.5):
-    """文字数が少ないときは大きく（スカスカ防止）、多いときは自動縮小（文字溢れ防止）"""
     char_count = len(text.strip())
     line_count = text.count('\n') + 1
 
@@ -323,11 +322,11 @@ def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
             pass
 
 # ==========================================
-# 要素位置・揃え自動整列エンジン（見出し赤棒・STEPアイコン・被り自動解消）
+# 要素位置・整列エンジン（赤バー位置ズレ＆STEP被り＆幅固定を完全修正）
 # ==========================================
 def align_shape_positions(slide):
-    """主要見出し前の赤棒、補助項目の四角、STEPアイコン、被り解消の完璧調整"""
     main_title_shape = None
+    main_body_shape = None
     step_texts = {}
     step_badges = {}
 
@@ -335,6 +334,8 @@ def align_shape_positions(slide):
         sname = shape.name.upper()
         if "MAIN_SECTION_TITLE" in sname:
             main_title_shape = shape
+        elif "MAIN_BODY_TEXT" in sname:
+            main_body_shape = shape
         
         for k in range(1, 5):
             if f"STEP_{k}_TEXT" in sname:
@@ -342,7 +343,7 @@ def align_shape_positions(slide):
             elif f"STEP_{k}_BADGE" in sname:
                 step_badges[k] = shape
 
-    # 1. 主要見出し前の赤棒 (SECTION_LINE) の位置と幅（4pt）をテキスト高さにピッタリ同期
+    # 1. 主要見出し前の赤棒 (SECTION_LINE) の幅（4pt）と位置をテキスト高さにピッタリ修正
     for shape in slide.shapes:
         if "SECTION_LINE" in shape.name or ("LINE" in shape.name.upper() and shape.shape_type == 1):
             shape.width = Pt(4.0)
@@ -350,53 +351,63 @@ def align_shape_positions(slide):
             if main_title_shape:
                 shape.top = int(main_title_shape.top + Pt(3.5))
 
-    # 2. STEPバッジとSTEPテキストの垂直中央ライン・フォントサイズ完全統一（13.5pt）
-    for k in range(1, 5):
-        if k in step_texts:
-            text_shp = step_texts[k]
-            if text_shp.has_text_frame:
-                for p in text_shp.text_frame.paragraphs:
-                    p.font.size = Pt(13.5)
-                    for r in p.runs:
-                        r.font.size = Pt(13.5)
-
-        if k in step_badges and k in step_texts:
-            badge = step_badges[k]
-            text_shp = step_texts[k]
-            
-            if badge.has_text_frame:
-                badge.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
-                badge.text_frame.margin_top = Pt(1.0)
-                badge.text_frame.margin_bottom = Pt(1.0)
-            
-            if text_shp.has_text_frame:
-                text_shp.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
-                text_shp.text_frame.margin_top = Pt(1.0)
-                text_shp.text_frame.margin_bottom = Pt(1.0)
-
-            badge.height = Pt(16.0)
-            badge.top = int(text_shp.top + (text_shp.height - badge.height) / 2)
-
-    # 3. STEPスライド下部（SECTION_TITLE, BODY_TEXT）の文字被り退避・解消
+    # 2. STEPスライドにおける文字被り・重複枠の消去 ＆ 動的垂直整列
     if len(step_texts) > 0:
+        # 重複する下部テキストボックス（SECTION_TITLE, BODY_TEXT）を消去
+        shapes_to_del = []
         for shape in slide.shapes:
             sname = shape.name.upper()
-            if "SECTION_TITLE" in sname and "MAIN" not in sname:
-                shape.top = Pt(340)
-            elif "BODY_TEXT" in sname and "MAIN" not in sname:
-                shape.top = Pt(368)
+            if sname in ["SECTION_TITLE", "BODY_TEXT"] and "MAIN" not in sname:
+                shapes_to_del.append(shape)
+        for shp in shapes_to_del:
+            try:
+                sp = shp._element
+                sp.getparent().remove(sp)
+            except Exception:
+                pass
+
+        # 本文の直下からSTEP項目を動的配置（文字被り100%防止）
+        start_top = int(main_body_shape.top + Pt(32.0)) if main_body_shape else Pt(195)
+        for k in range(1, 5):
+            if k in step_texts:
+                t_shp = step_texts[k]
+                t_shp.top = start_top + (k - 1) * int(Pt(30.0))
+                if t_shp.has_text_frame:
+                    for p in t_shp.text_frame.paragraphs:
+                        p.font.size = Pt(13.0)
+                        for r in p.runs:
+                            r.font.size = Pt(13.0)
+
+            if k in step_badges and k in step_texts:
+                badge = step_badges[k]
+                text_shp = step_texts[k]
+                
+                if badge.has_text_frame:
+                    badge.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
+                    badge.text_frame.margin_top = Pt(1.0)
+                    badge.text_frame.margin_bottom = Pt(1.0)
+                
+                if text_shp.has_text_frame:
+                    text_shp.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
+                    text_shp.text_frame.margin_top = Pt(1.0)
+                    text_shp.text_frame.margin_bottom = Pt(1.0)
+
+                badge.height = Pt(16.0)
+                badge.top = int(text_shp.top + (text_shp.height - badge.height) / 2)
 
 def adjust_shapes_for_chart(slide):
     align_shape_positions(slide)
     for shape in slide.shapes:
-        if shape.has_text_frame and shape.top > Pt(80) and Pt(100) <= shape.left < Pt(350):
+        # 赤バー(SECTION_LINE)の幅は 4pt に完全ロック
+        if "SECTION_LINE" in shape.name or ("LINE" in shape.name.upper() and shape.shape_type == 1):
+            shape.width = Pt(4.0)
+        elif shape.has_text_frame and shape.top > Pt(80) and Pt(100) <= shape.left < Pt(350):
             shape.width = Pt(220)
 
 # ==========================================
 # タイトル段落の番号赤色化 ＆ タイトルフォントサイズ完全保持
 # ==========================================
 def format_chapter_title_paragraph(p, ch_num, ch_title):
-    """タイトルの先頭番号（01等）のみ赤色にし、タイトル文字・サイズは元のテンプレートまま100%維持"""
     clean_title = re.sub(r'^\d+[\.\s_]*', '', str(ch_title)).strip() if ch_title else ""
     
     base_font_name = None
@@ -451,7 +462,7 @@ def process_paragraph_runs(p, replace_map, chapter_num=None, chapter_title=None,
             for r in p.runs[1:]:
                 r.text = ""
 
-    # 表紙スライド・STEP項目以外の本文テキストについてのみスカスカ感防止＆自動調整を適用
+    # 表紙スライド・STEP項目以外の本文テキストについてのみ自動縮小・調整を適用
     if not is_cover and p_text and len(p_text.strip()) > 5:
         if not any(tag in p_text for tag in ["[[章タイトル]]", "STEP", "P1", "P2"]):
             auto_fit_font_size_and_spacing(p, p_text, min_size_pt=9.5)
@@ -472,7 +483,6 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
     body_val = replace_map.get("[[本文]]", "")
     has_body = bool(body_val and str(body_val).strip())
 
-    # 要素整列の実行
     if not is_cover:
         align_shape_positions(slide)
 
@@ -803,7 +813,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
 
     st.markdown("---")
     
-    # 赤色太字カスタムボタン（type="primary" で強固指定）
+    # 赤色太字カスタムボタン (type="primary" で強固指定)
     if st.button("✨ この内容で PowerPoint 資料を自動生成する ✨", key="generate_pptx_btn", type="primary", use_container_width=True):
         status_box = st.empty()
         with st.spinner("WEB編集結果を元にPowerPoint資料を構築中..."):
@@ -855,7 +865,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
 
                     index_map[f"[[章{ch_idx+1}タイトル]]"] = f"{ch_num_str} {clean_ch_title}"
                     index_map[f"P[[章{ch_idx+1}ページ]]"] = f"P{ch_page_num}"
-                    index_map[f"[[章{ch_idx+1}ページ]]"] = str(ch_page_num)
+                    index_map[f"[[章{k}ページ]]" if 'k' in locals() else f"[[章{ch_idx+1}ページ]]"] = str(ch_page_num)
 
                 for k in range(len(edited_chapters) + 1, 7):
                     index_map[f"[[章{k}タイトル]]"] = ""
