@@ -322,9 +322,14 @@ def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
             pass
 
 # ==========================================
-# STEP 1〜4 完全構築 ＆ 9ptメイリオ小ぶりアイコンエンジン
+# STEP 1〜4 完全構築 ＆ 余白（52pt）拡大 ＆ 9ptメイリオアイコン
 # ==========================================
-def build_and_format_steps(slide, step_descs):
+def build_perfect_steps(slide, step_descs):
+    main_body_shape = None
+    for shp in slide.shapes:
+        if "MAIN_BODY_TEXT" in shp.name.upper():
+            main_body_shape = shp
+
     spTree = slide.shapes._spTree
     step_badges = {}
     step_texts = {}
@@ -340,11 +345,10 @@ def build_and_format_steps(slide, step_descs):
         elif "STEP_4_BADGE" in sname: step_badges[4] = shp
         elif "STEP_4_TEXT" in sname: step_texts[4] = shp
 
-    # STEP 3 と STEP 4 の不足分を自動複製作成
+    # 不足している STEP 3, 4 をクローン自動生成
     if 1 in step_badges and 1 in step_texts:
         base_b = step_badges[1]
         base_t = step_texts[1]
-
         for k in range(3, 5):
             if k not in step_badges:
                 new_b_el = copy.deepcopy(base_b._element)
@@ -352,7 +356,6 @@ def build_and_format_steps(slide, step_descs):
                 new_b = slide.shapes[-1]
                 new_b.name = f"STEP_{k}_BADGE"
                 step_badges[k] = new_b
-
             if k not in step_texts:
                 new_t_el = copy.deepcopy(base_t._element)
                 spTree.append(new_t_el)
@@ -362,10 +365,10 @@ def build_and_format_steps(slide, step_descs):
 
     # 不要な重複下部枠（SECTION_TITLE, BODY_TEXT）を消去
     shapes_to_del = []
-    for shape in slide.shapes:
-        sname = shape.name.upper()
+    for shp in slide.shapes:
+        sname = shp.name.upper()
         if sname in ["SECTION_TITLE", "BODY_TEXT"] and "MAIN" not in sname:
-            shapes_to_del.append(shape)
+            shapes_to_del.append(shp)
     for shp in shapes_to_del:
         try:
             sp = shp._element
@@ -373,23 +376,19 @@ def build_and_format_steps(slide, step_descs):
         except Exception:
             pass
 
-    main_body_shape = None
-    for shp in slide.shapes:
-        if "MAIN_BODY_TEXT" in shp.name.upper():
-            main_body_shape = shp
-
-    start_top = int(main_body_shape.top + Pt(30.0)) if main_body_shape else Pt(185)
-    step_gap = Pt(28.0)
+    # ★上の文章と STEP 1 の間の縦マージンを広々拡大 (Pt(52.0) 離す)★
+    start_top = int(main_body_shape.top + Pt(52.0)) if main_body_shape else Pt(205.0)
+    step_gap = Pt(32.0)
 
     for k in range(1, 5):
-        # 1. テキスト枠の設定（13pt メイリオ）
+        # 1. テキスト枠の設定（★STEP 4 も含め確実に反映★）
         if k in step_texts:
             t_shp = step_texts[k]
             t_shp.top = int(start_top + (k - 1) * step_gap)
             if t_shp.has_text_frame:
                 tf = t_shp.text_frame
                 tf.word_wrap = True
-                tf.text = step_descs[k - 1] if len(step_descs) >= k else ""
+                tf.text = step_descs[k - 1] if len(step_descs) >= k else f"アクション {k}"
                 tf.vertical_anchor = MSO_ANCHOR.MIDDLE
                 tf.margin_top = Pt(1.0)
                 tf.margin_bottom = Pt(1.0)
@@ -425,35 +424,41 @@ def build_and_format_steps(slide, step_descs):
                         r.font.size = Pt(9.0)
                         r.font.bold = True
                         r.font.color.rgb = RGBColor(255, 255, 255)
-                        
-                        rPr = r._r.get_or_add_rPr()
-                        rPr.attrib['sz'] = '900'
-                        rPr.attrib['b'] = '1'
-                        for child in list(rPr):
-                            if child.tag.endswith('ea') or child.tag.endswith('latin'):
-                                rPr.remove(child)
-                        rPr.append(parse_xml(f'<a:ea {nsdecls("a")} typeface="メイリオ"/>'))
-                        rPr.append(parse_xml(f'<a:latin {nsdecls("a")} typeface="Meiryo"/>'))
 
 # ==========================================
-# 要素位置・整列エンジン
+# 要素位置・整列エンジン（主要見出し・補助項目の赤バーを完璧下め同期）
 # ==========================================
-def align_shape_positions(slide):
-    main_title_shape = None
-    for shape in slide.shapes:
-        if "MAIN_SECTION_TITLE" in shape.name.upper():
-            main_title_shape = shape
+def align_all_headers_and_connectors(slide):
+    main_title = None
+    sub_title = None
 
-    # 主要見出し前の赤棒 (SECTION_LINE) の位置を下め (top + Pt(5.5)) に補正 ＆ 幅 4pt 固定
-    for shape in slide.shapes:
-        if "SECTION_LINE" in shape.name or ("LINE" in shape.name.upper() and shape.shape_type == 1):
-            shape.width = Pt(4.0)
-            shape.height = Pt(19.3)
-            if main_title_shape:
-                shape.top = int(main_title_shape.top + Pt(5.5))
+    for shp in slide.shapes:
+        sname = shp.name.upper()
+        if "MAIN_SECTION_TITLE" in sname:
+            main_title = shp
+        elif "SUB_SECTION_TITLE" in sname or ("SECTION_TITLE" in sname and "MAIN" not in sname):
+            sub_title = shp
+
+    # 1. 主要見出しの赤バー (SECTION_LINE) の位置を文字とジャスト垂直同期 (top + Pt(5.5))
+    for shp in slide.shapes:
+        sname = shp.name.upper()
+        if "SECTION_LINE" in sname or (sname == "SECTION_LINE"):
+            shp.width = Pt(4.0)
+            shp.height = Pt(19.3)
+            if main_title:
+                shp.top = int(main_title.top + Pt(5.5))
+
+    # 2. 補助項目タイトルの縦線コネクタ (直線コネクタ 16 等) の位置を下め垂直同期
+    for shp in slide.shapes:
+        sname = shp.name.upper()
+        if "コネクタ" in shp.name or "LINE" in sname:
+            if "SECTION_LINE" not in sname:
+                if sub_title:
+                    shp.top = int(sub_title.top + Pt(4.0))
+                    shp.height = Pt(16.0)
 
 def adjust_shapes_for_chart(slide):
-    align_shape_positions(slide)
+    align_all_headers_and_connectors(slide)
     for shape in slide.shapes:
         if "SECTION_LINE" in shape.name or ("LINE" in shape.name.upper() and shape.shape_type == 1):
             shape.width = Pt(4.0)
@@ -540,9 +545,9 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
     has_body = bool(body_val and str(body_val).strip())
 
     if not is_cover:
-        align_shape_positions(slide)
+        align_all_headers_and_connectors(slide)
         if step_descs:
-            build_and_format_steps(slide, step_descs)
+            build_perfect_steps(slide, step_descs)
 
     for shape in slide.shapes:
         sname_upper = shape.name.upper()
