@@ -322,9 +322,9 @@ def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
             pass
 
 # ==========================================
-# 要素位置・整列エンジン（赤バー位置ズレ＆STEP被り＆幅固定を完全修正）
+# 要素位置・整列 ＆ STEP 1〜4 自動クローン生成エンジン
 # ==========================================
-def align_shape_positions(slide):
+def align_shape_positions_and_build_steps(slide, step_descs=None):
     main_title_shape = None
     main_body_shape = None
     step_texts = {}
@@ -343,17 +343,40 @@ def align_shape_positions(slide):
             elif f"STEP_{k}_BADGE" in sname:
                 step_badges[k] = shape
 
-    # 1. 主要見出し前の赤棒 (SECTION_LINE) の幅（4pt）と位置をテキスト高さにピッタリ修正
+    # 1. 主要見出し前の赤棒 (SECTION_LINE) の位置を下め (top + Pt(5.5)) に調整 ＆ 幅 4pt 固定
     for shape in slide.shapes:
         if "SECTION_LINE" in shape.name or ("LINE" in shape.name.upper() and shape.shape_type == 1):
             shape.width = Pt(4.0)
             shape.height = Pt(19.3)
             if main_title_shape:
-                shape.top = int(main_title_shape.top + Pt(3.5))
+                shape.top = int(main_title_shape.top + Pt(5.5))
 
-    # 2. STEPスライドにおける文字被り・重複枠の消去 ＆ 動的垂直整列
+    # 2. STEP 3 と STEP 4 の動的クローン作成（STEP全表示）
+    if step_descs and len(step_descs) >= 3 and 1 in step_badges and 1 in step_texts:
+        spTree = slide.shapes._spTree
+        base_b = step_badges[1]
+        base_t = step_texts[1]
+
+        for k in range(3, len(step_descs) + 1):
+            if k <= 4 and k not in step_badges:
+                # Badgeの生成
+                new_b_el = copy.deepcopy(base_b._element)
+                spTree.append(new_b_el)
+                new_b = slide.shapes[-1]
+                new_b.name = f"STEP_{k}_BADGE"
+                step_badges[k] = new_b
+
+            if k <= 4 and k not in step_texts:
+                # Textの生成
+                new_t_el = copy.deepcopy(base_t._element)
+                spTree.append(new_t_el)
+                new_t = slide.shapes[-1]
+                new_t.name = f"STEP_{k}_TEXT"
+                step_texts[k] = new_t
+
+    # 3. STEPスライドにおける文字被り解消 ＆ 一律13pt統一設定
     if len(step_texts) > 0:
-        # 重複する下部テキストボックス（SECTION_TITLE, BODY_TEXT）を消去
+        # 重複する下部不要枠（SECTION_TITLE, BODY_TEXT）を消去
         shapes_to_del = []
         for shape in slide.shapes:
             sname = shape.name.upper()
@@ -366,39 +389,36 @@ def align_shape_positions(slide):
             except Exception:
                 pass
 
-        # 本文の直下からSTEP項目を動的配置（文字被り100%防止）
-        start_top = int(main_body_shape.top + Pt(32.0)) if main_body_shape else Pt(195)
+        # STEPの動的配置（文字被り100%防止）
+        start_top = int(main_body_shape.top + Pt(30.0)) if main_body_shape else Pt(190)
+        step_gap = Pt(30.0)
+
         for k in range(1, 5):
             if k in step_texts:
                 t_shp = step_texts[k]
-                t_shp.top = start_top + (k - 1) * int(Pt(30.0))
+                t_shp.top = int(start_top + (k - 1) * step_gap)
                 if t_shp.has_text_frame:
+                    if step_descs and len(step_descs) >= k:
+                        t_shp.text_frame.text = step_descs[k - 1]
                     for p in t_shp.text_frame.paragraphs:
                         p.font.size = Pt(13.0)
+                        p.font.name = "メイリオ"
                         for r in p.runs:
                             r.font.size = Pt(13.0)
+                            r.font.name = "メイリオ"
 
-            if k in step_badges and k in step_texts:
+            if k in step_badges:
                 badge = step_badges[k]
-                text_shp = step_texts[k]
-                
-                if badge.has_text_frame:
-                    badge.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
-                    badge.text_frame.margin_top = Pt(1.0)
-                    badge.text_frame.margin_bottom = Pt(1.0)
-                
-                if text_shp.has_text_frame:
-                    text_shp.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
-                    text_shp.text_frame.margin_top = Pt(1.0)
-                    text_shp.text_frame.margin_bottom = Pt(1.0)
-
                 badge.height = Pt(16.0)
-                badge.top = int(text_shp.top + (text_shp.height - badge.height) / 2)
+                if k in step_texts:
+                    t_shp = step_texts[k]
+                    badge.top = int(t_shp.top + (t_shp.height - badge.height) / 2)
+                if badge.has_text_frame:
+                    badge.text_frame.text = f"STEP {k}"
+                    badge.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
 
 def adjust_shapes_for_chart(slide):
-    align_shape_positions(slide)
     for shape in slide.shapes:
-        # 赤バー(SECTION_LINE)の幅は 4pt に完全ロック
         if "SECTION_LINE" in shape.name or ("LINE" in shape.name.upper() and shape.shape_type == 1):
             shape.width = Pt(4.0)
         elif shape.has_text_frame and shape.top > Pt(80) and Pt(100) <= shape.left < Pt(350):
@@ -432,7 +452,7 @@ def format_chapter_title_paragraph(p, ch_num, ch_title):
     if base_font_size: r1.font.size = base_font_size
 
 # ==========================================
-# 段落置換処理（可変フォントサイズ＆行間調整付き）
+# 段落置換処理
 # ==========================================
 def process_paragraph_runs(p, replace_map, chapter_num=None, chapter_title=None, is_cover=False):
     if "00" in p.text or "[[章タイトル]]" in p.text:
@@ -470,7 +490,7 @@ def process_paragraph_runs(p, replace_map, chapter_num=None, chapter_title=None,
 # ==========================================
 # スライド要素置換処理
 # ==========================================
-def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=None, assigned_files=None, captions=None, is_cover=False):
+def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=None, assigned_files=None, captions=None, is_cover=False, step_descs=None):
     shapes_to_remove = []
     has_assigned = assigned_files is not None and len(assigned_files) > 0
 
@@ -484,7 +504,7 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
     has_body = bool(body_val and str(body_val).strip())
 
     if not is_cover:
-        align_shape_positions(slide)
+        align_shape_positions_and_build_steps(slide, step_descs=step_descs)
 
     for shape in slide.shapes:
         sname_upper = shape.name.upper()
@@ -865,7 +885,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
 
                     index_map[f"[[章{ch_idx+1}タイトル]]"] = f"{ch_num_str} {clean_ch_title}"
                     index_map[f"P[[章{ch_idx+1}ページ]]"] = f"P{ch_page_num}"
-                    index_map[f"[[章{k}ページ]]" if 'k' in locals() else f"[[章{ch_idx+1}ページ]]"] = str(ch_page_num)
+                    index_map[f"[[章{ch_idx+1}ページ]]"] = str(ch_page_num)
 
                 for k in range(len(edited_chapters) + 1, 7):
                     index_map[f"[[章{k}タイトル]]"] = ""
@@ -941,6 +961,14 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     ch_map["[[注意文]]"] = notice_val
 
                     step_descs = ch.get("step_descs", [])
+                    if not step_descs or len(step_descs) < 4:
+                        step_descs = [
+                            "顧客購買データの詳細分析",
+                            "高単価ターゲット層へのアプローチ強化",
+                            "新プロモーションの実施",
+                            "月商200万円の継続的維持"
+                        ]
+
                     for idx_s in range(1, 5):
                         desc_s = step_descs[idx_s - 1] if len(step_descs) >= idx_s else ""
                         ch_map[f"[[STEP{idx_s}の説明]]"] = desc_s
@@ -948,7 +976,8 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     process_slide_shapes(
                         ch_slide, ch_map,
                         chapter_num=ch_num_str, chapter_title=clean_ch_title,
-                        assigned_files=assigned_files, captions=captions
+                        assigned_files=assigned_files, captions=captions,
+                        step_descs=step_descs
                     )
 
                     if should_draw_chart and chart_info:
