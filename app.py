@@ -2,6 +2,7 @@ import streamlit as st
 from google import genai
 from pptx import Presentation
 from pptx.util import Pt
+from pptx.dml.color import RGBColor
 from pptx.chart.data import CategoryChartData
 from pptx.enum.shapes import PP_PLACEHOLDER
 from pptx.enum.chart import XL_CHART_TYPE
@@ -19,7 +20,7 @@ import unicodedata
 
 st.set_page_config(page_title="W3 AutoSlide", layout="wide")
 
-# カスタムCSS（デザイン調整）
+# カスタムCSS（デザイン調整・赤色太字ボタン定義）
 st.markdown("""
     <style>
     img {
@@ -30,13 +31,18 @@ st.markdown("""
         border-radius: 8px !important;
         font-size: 16px !important;
     }
-    .main-btn > button {
+    /* メイン生成ボタンの赤色・太字カスタム */
+    div.element-container:has(button[key="generate_pptx_btn"]) button {
         background-color: #ff4b4b !important;
         color: #ffffff !important;
+        font-weight: bold !important;
         font-size: 18px !important;
-        padding: 10px 24px !important;
+        padding: 12px 28px !important;
+        border: none !important;
+        border-radius: 8px !important;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1) !important;
     }
-    .main-btn > button:hover {
+    div.element-container:has(button[key="generate_pptx_btn"]) button:hover {
         background-color: #d93025 !important;
         color: #ffffff !important;
     }
@@ -52,6 +58,17 @@ st.markdown("""
 
 st.image("logo.png", width=350)
 st.caption("AI資料 自動生成システム")
+
+# レイアウトタイプの日本語表示マッピング
+LAYOUT_MAP = {
+    "line_chart": "折れ線グラフ（推移・トレンド）",
+    "bar_chart": "棒グラフ（比較・実績）",
+    "text": "標準テキスト（文章・概要）",
+    "step": "実行ステップ（フロー・手順）",
+    "checklist": "チェックリスト（確認項目）",
+    "table": "表組み（料金・仕様一覧）"
+}
+LAYOUT_REVERSE_MAP = {v: k for k, v in LAYOUT_MAP.items()}
 
 # ==========================================
 # API呼び出し用リトライエンジン（503/429混雑対策）
@@ -108,22 +125,35 @@ def sanitize_main_item(main_item, clean_ch_title):
     return main_item
 
 # ==========================================
-# 機能③: 【文字溢れ防止】自動フォントサイズ調整エンジン
+# 自動フォントサイズ＆間隔調整エンジン（スカスカ感防止＆文字溢れ防止）
 # ==========================================
-def auto_fit_font_size(paragraph, text, base_size_pt=14, min_size_pt=9.5):
-    """本文や長文テキストの文字数・改行数に応じてフォントサイズを動的に自動調整"""
-    char_count = len(text)
+def auto_fit_font_size_and_spacing(paragraph, text, min_size_pt=9.5):
+    """文字数が少ないときは大きく（スカスカ防止）、多いときは自動縮小（文字溢れ防止）"""
+    char_count = len(text.strip())
     line_count = text.count('\n') + 1
 
-    target_size = base_size_pt
-    if char_count > 150 or line_count >= 7:
-        target_size = max(min_size_pt, base_size_pt - 4.5)
-    elif char_count > 100 or line_count >= 5:
-        target_size = max(min_size_pt, base_size_pt - 3.0)
-    elif char_count > 60 or line_count >= 3:
-        target_size = max(min_size_pt, base_size_pt - 1.5)
+    # 文字数・改行数に応じた動的スケーリング
+    if char_count < 50 and line_count <= 2:
+        target_size = 18.0
+        space_after = Pt(14)
+        line_spacing = 1.35
+    elif char_count < 90 and line_count <= 4:
+        target_size = 16.0
+        space_after = Pt(12)
+        line_spacing = 1.3
+    elif char_count < 140 and line_count <= 6:
+        target_size = 13.5
+        space_after = Pt(8)
+        line_spacing = 1.2
+    else:
+        target_size = max(min_size_pt, 11.5 if char_count < 200 else 9.5)
+        space_after = Pt(5)
+        line_spacing = 1.15
 
     p_size = Pt(target_size)
+    paragraph.space_after = space_after
+    paragraph.line_spacing = line_spacing
+
     if len(paragraph.runs) > 0:
         for run in paragraph.runs:
             run.font.size = p_size
@@ -243,9 +273,26 @@ def ensure_page_number(slide, page_num):
         p.font.size = Pt(12)
 
 # ==========================================
-# グラフフォント（メイリオ ＋ 9pt小ぶり化）XMLレベル強制適用
+# グラフフォント（メイリオ ＋ 赤テーマ色 ＋ タイトル反映）XMLレベル適用
 # ==========================================
-def force_meiryo_and_size_on_chart(chart, font_size_pt=9):
+def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
+    # 1. グラフタイトルのメイリオ 11pt 化
+    if chart.has_title and chart.chart_title.text_frame:
+        for p in chart.chart_title.text_frame.paragraphs:
+            p.font.name = "メイリオ"
+            p.font.size = Pt(11)
+            for run in p.runs:
+                run.font.name = "メイリオ"
+                run.font.size = Pt(11)
+                rPr = run._r.get_or_add_rPr()
+                rPr.attrib['sz'] = '1100'
+                for child in list(rPr):
+                    if child.tag.endswith('ea') or child.tag.endswith('latin'):
+                        rPr.remove(child)
+                rPr.append(parse_xml(f'<a:ea {nsdecls("a")} typeface="メイリオ"/>'))
+                rPr.append(parse_xml(f'<a:latin {nsdecls("a")} typeface="Meiryo"/>'))
+
+    # 2. X軸・Y軸のフォント設定
     for axis in [getattr(chart, 'category_axis', None), getattr(chart, 'value_axis', None)]:
         if axis and hasattr(axis, 'tick_labels'):
             try:
@@ -265,6 +312,7 @@ def force_meiryo_and_size_on_chart(chart, font_size_pt=9):
             except Exception:
                 pass
 
+    # 3. 凡例のフォント設定
     if chart.has_legend and chart.legend:
         try:
             chart.legend.font.name = "メイリオ"
@@ -312,7 +360,7 @@ def format_chapter_title_paragraph(p, ch_num, ch_title):
             p.text = new_text
 
 # ==========================================
-# 段落置換処理（自動フォントアジャスト付き）
+# 段落置換処理（可変フォントサイズ＆行間調整付き）
 # ==========================================
 def process_paragraph_runs(p, replace_map, chapter_num=None, chapter_title=None):
     if "00" in p.text or "[[章タイトル]]" in p.text:
@@ -341,9 +389,9 @@ def process_paragraph_runs(p, replace_map, chapter_num=None, chapter_title=None)
             for r in p.runs[1:]:
                 r.text = ""
 
-    # 本文テキストの文字数に応じた自動フォントサイズ調整
-    if p_text and len(p_text.strip()) > 30 and not any(tag in p_text for tag in ["[[章タイトル]]", "STEP", "P1", "P2"]):
-        auto_fit_font_size(p, p_text, base_size_pt=14, min_size_pt=9.5)
+    # 本文テキストのスカスカ感防止＆文字溢れ自動調整
+    if p_text and len(p_text.strip()) > 5 and not any(tag in p_text for tag in ["[[章タイトル]]", "STEP", "P1", "P2"]):
+        auto_fit_font_size_and_spacing(p, p_text, min_size_pt=9.5)
 
 # ==========================================
 # スライド要素置換処理
@@ -600,7 +648,7 @@ with col_btn1:
                         st.error(f"解析中にエラーが発生しました: {e}")
 
 # ==========================================
-# 機能①: WEB編集フォーム ＆ 最終生成
+# ステップ2: WEB編集フォーム ＆ 最終生成
 # ==========================================
 if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state:
     st.subheader("✏️ AI解析結果のプレビュー ＆ WEB編集フォーム")
@@ -619,10 +667,14 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 e_body = st.text_area(f"スライド{idx+1} 本文", value=ch.get("body", ""), height=100, key=f"body_{idx}")
 
             with ec_cols2:
-                layout_options = ["line_chart", "bar_chart", "text", "step", "checklist", "table"]
-                current_layout = str(ch.get("layout_type", "text")).lower()
-                l_idx = layout_options.index(current_layout) if current_layout in layout_options else 2
-                e_layout = st.selectbox(f"レイアウトタイプ", layout_options, index=l_idx, key=f"layout_{idx}")
+                # 日本語表示のレイアウト選択ドロップダウン
+                current_layout_key = str(ch.get("layout_type", "text")).lower()
+                current_label = LAYOUT_MAP.get(current_layout_key, LAYOUT_MAP["text"])
+                labels_list = list(LAYOUT_MAP.values())
+                l_idx = labels_list.index(current_label) if current_label in labels_list else 2
+                
+                selected_label = st.selectbox(f"レイアウトタイプ", labels_list, index=l_idx, key=f"layout_{idx}")
+                e_layout = LAYOUT_REVERSE_MAP[selected_label]
                 
                 e_sub_title = st.text_input(f"補助項目 タイトル", value=ch.get("sub_title", ""), key=f"sub_t_{idx}")
                 e_sub_body = st.text_area(f"補助項目 本文", value=ch.get("sub_body", ""), height=68, key=f"sub_b_{idx}")
@@ -685,8 +737,8 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
 
     st.markdown("---")
     
-    st.markdown('<div class="main-btn">', unsafe_allow_html=True)
-    if st.button("✨ この内容で PowerPoint 資料を自動生成する ✨", use_container_width=True):
+    # 赤色太字カスタムボタン
+    if st.button("✨ この内容で PowerPoint 資料を自動生成する ✨", key="generate_pptx_btn", use_container_width=True):
         status_box = st.empty()
         with st.spinner("WEB編集結果を元にPowerPoint資料を構築中..."):
             try:
@@ -823,6 +875,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         assigned_files=assigned_files, captions=captions
                     )
 
+                    # グラフ描画（タイトル反映 ＋ テーマ赤色化 ＋ 9pt指定）
                     if should_draw_chart and chart_info:
                         categories = chart_info.get("categories", ["7月", "8月", "9月", "10月"])
                         series_name = str(chart_info.get("series_name", "売上高（万円）"))
@@ -853,8 +906,30 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                                 chart_shape = ch_slide.shapes.add_chart(c_type, x_pos, y_pos, cx_pos, cy_pos, chart_data)
                                 chart = chart_shape.chart
 
-                                chart.has_title = False
-                                force_meiryo_and_size_on_chart(chart, font_size_pt=9)
+                                # ★グラフタイトル有効化＆セット★
+                                chart.has_title = True
+                                g_title_text = str(chart_info.get("title", f"{clean_ch_title}"))
+                                chart.chart_title.text_frame.text = g_title_text
+
+                                # ★データ系列の赤色化（RGB: 217, 48, 37）★
+                                for s in chart.series:
+                                    s.format.line.color.rgb = RGBColor(217, 48, 37)
+                                    s.format.line.width = Pt(2.5)
+                                    if hasattr(s, 'format') and hasattr(s.format, 'fill'):
+                                        try:
+                                            s.format.fill.solid()
+                                            s.format.fill.fore_color.rgb = RGBColor(217, 48, 37)
+                                        except Exception:
+                                            pass
+                                    try:
+                                        if hasattr(s, 'marker'):
+                                            s.marker.format.fill.solid()
+                                            s.marker.format.fill.fore_color.rgb = RGBColor(217, 48, 37)
+                                            s.marker.format.line.color.rgb = RGBColor(217, 48, 37)
+                                    except Exception:
+                                        pass
+
+                                force_meiryo_and_style_on_chart(chart, font_size_pt=9)
                                 chart_created = True
                             except Exception:
                                 pass
@@ -892,4 +967,3 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     )
             except Exception as e:
                 st.error(f"エラーが発生しました: {e}")
-    st.markdown('</div>', unsafe_allow_html=True)
