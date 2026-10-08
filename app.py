@@ -322,7 +322,7 @@ def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
             pass
 
 # ==========================================
-# STEP 1〜4 完全構築 ＆ 余白（52pt）拡大 ＆ 9ptメイリオアイコン
+# STEP 1〜4 完全固定構築 ＆ 被り遮断エンジン
 # ==========================================
 def build_perfect_steps(slide, step_descs):
     main_body_shape = None
@@ -345,7 +345,7 @@ def build_perfect_steps(slide, step_descs):
         elif "STEP_4_BADGE" in sname: step_badges[4] = shp
         elif "STEP_4_TEXT" in sname: step_texts[4] = shp
 
-    # 不足している STEP 3, 4 をクローン自動生成
+    # STEP 3 と STEP 4 を自動クローン作成
     if 1 in step_badges and 1 in step_texts:
         base_b = step_badges[1]
         base_t = step_texts[1]
@@ -363,7 +363,7 @@ def build_perfect_steps(slide, step_descs):
                 new_t.name = f"STEP_{k}_TEXT"
                 step_texts[k] = new_t
 
-    # 不要な重複下部枠（SECTION_TITLE, BODY_TEXT）を消去
+    # 下部重複不要枠（SECTION_TITLE, BODY_TEXT）の削除
     shapes_to_del = []
     for shp in slide.shapes:
         sname = shp.name.upper()
@@ -376,12 +376,18 @@ def build_perfect_steps(slide, step_descs):
         except Exception:
             pass
 
-    # ★上の文章と STEP 1 の間の縦マージンを広々拡大 (Pt(52.0) 離す)★
-    start_top = int(main_body_shape.top + Pt(52.0)) if main_body_shape else Pt(205.0)
+    # 本文の行数に応じた動的 Y 座標計算（被り完全遮断）
+    est_body_height = Pt(24)
+    if main_body_shape and main_body_shape.has_text_frame:
+        txt = main_body_shape.text_frame.text.strip()
+        line_cnt = txt.count('\n') + len(txt) // 30 + 1
+        est_body_height = max(Pt(24), Pt(line_cnt * 18))
+
+    start_top = int(main_body_shape.top + est_body_height + Pt(24.0)) if main_body_shape else Pt(205.0)
     step_gap = Pt(32.0)
 
     for k in range(1, 5):
-        # 1. テキスト枠の設定（★STEP 4 も含め確実に反映★）
+        # 1. STEPテキスト枠の直接注入（他からの誤置換を完全に遮断）
         if k in step_texts:
             t_shp = step_texts[k]
             t_shp.top = int(start_top + (k - 1) * step_gap)
@@ -399,7 +405,7 @@ def build_perfect_steps(slide, step_descs):
                         r.font.size = Pt(13.0)
                         r.font.name = "メイリオ"
 
-        # 2. バッジ（アイコン）の設定（★9pt メイリオ白太字★）
+        # 2. STEPバッジアイコン（9pt メイリオ白太字）
         if k in step_badges:
             b_shp = step_badges[k]
             b_shp.height = Pt(16.0)
@@ -426,7 +432,7 @@ def build_perfect_steps(slide, step_descs):
                         r.font.color.rgb = RGBColor(255, 255, 255)
 
 # ==========================================
-# 要素位置・整列エンジン（主要見出し・補助項目の赤バーを完璧下め同期）
+# 要素位置・整列エンジン（主要見出し・補助項目赤バーを完璧位置合わせ）
 # ==========================================
 def align_all_headers_and_connectors(slide):
     main_title = None
@@ -439,7 +445,7 @@ def align_all_headers_and_connectors(slide):
         elif "SUB_SECTION_TITLE" in sname or ("SECTION_TITLE" in sname and "MAIN" not in sname):
             sub_title = shp
 
-    # 1. 主要見出しの赤バー (SECTION_LINE) の位置を文字とジャスト垂直同期 (top + Pt(5.5))
+    # 1. 主要見出しの赤バー (SECTION_LINE) の位置を下め垂直同期
     for shp in slide.shapes:
         sname = shp.name.upper()
         if "SECTION_LINE" in sname or (sname == "SECTION_LINE"):
@@ -546,8 +552,6 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
 
     if not is_cover:
         align_all_headers_and_connectors(slide)
-        if step_descs:
-            build_perfect_steps(slide, step_descs)
 
     for shape in slide.shapes:
         sname_upper = shape.name.upper()
@@ -647,6 +651,10 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
             sp.getparent().remove(sp)
         except Exception:
             pass
+
+    # ★すべての置換処理が完了した最最終工程で、STEP 1〜4 を確定注入（他からの誤置換を完全に遮断）★
+    if not is_cover and step_descs:
+        build_perfect_steps(slide, step_descs)
 
 # ==========================================
 # 1. 入力UI ＆ サイドバー
@@ -1027,7 +1035,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         ch_slide, ch_map,
                         chapter_num=ch_num_str, chapter_title=clean_ch_title,
                         assigned_files=assigned_files, captions=captions,
-                        step_descs=step_descs
+                        step_descs=step_descs if layout_type == "step" or "アクション" in clean_ch_title or "手順" in clean_ch_title else None
                     )
 
                     if should_draw_chart and chart_info:
