@@ -3,7 +3,7 @@ from google import genai
 from pptx import Presentation
 from pptx.util import Pt
 from pptx.dml.color import RGBColor
-from pptx.enum.text import MSO_ANCHOR
+from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 from pptx.chart.data import CategoryChartData
 from pptx.enum.shapes import PP_PLACEHOLDER
 from pptx.enum.chart import XL_CHART_TYPE
@@ -322,7 +322,7 @@ def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
             pass
 
 # ==========================================
-# STEP 1〜4 完全固定構築 ＆ 被り遮断エンジン
+# STEP 1〜4 完全構築 ＆ 余白拡大 ＆ アイコン中央揃え
 # ==========================================
 def build_perfect_steps(slide, step_descs):
     main_body_shape = None
@@ -345,7 +345,7 @@ def build_perfect_steps(slide, step_descs):
         elif "STEP_4_BADGE" in sname: step_badges[4] = shp
         elif "STEP_4_TEXT" in sname: step_texts[4] = shp
 
-    # STEP 3 と STEP 4 を自動クローン作成
+    # STEP 3, 4 を動的クローン生成
     if 1 in step_badges and 1 in step_texts:
         base_b = step_badges[1]
         base_t = step_texts[1]
@@ -363,12 +363,15 @@ def build_perfect_steps(slide, step_descs):
                 new_t.name = f"STEP_{k}_TEXT"
                 step_texts[k] = new_t
 
-    # 下部重複不要枠（SECTION_TITLE, BODY_TEXT）の削除
+    # ★不要な下部枠 ＆ ネイビーステップコネクタ線を消去★
     shapes_to_del = []
     for shp in slide.shapes:
         sname = shp.name.upper()
         if sname in ["SECTION_TITLE", "BODY_TEXT"] and "MAIN" not in sname:
             shapes_to_del.append(shp)
+        elif "コネクタ" in shp.name or ("LINE" in sname and "SECTION_LINE" not in sname):
+            shapes_to_del.append(shp)
+
     for shp in shapes_to_del:
         try:
             sp = shp._element
@@ -376,7 +379,7 @@ def build_perfect_steps(slide, step_descs):
         except Exception:
             pass
 
-    # 本文の行数に応じた動的 Y 座標計算（被り完全遮断）
+    # ★上の文章と STEP 1 の間の縦マージンを本文1行分（約24pt）しっかり広げる★
     est_body_height = Pt(24)
     if main_body_shape and main_body_shape.has_text_frame:
         txt = main_body_shape.text_frame.text.strip()
@@ -387,7 +390,7 @@ def build_perfect_steps(slide, step_descs):
     step_gap = Pt(32.0)
 
     for k in range(1, 5):
-        # 1. STEPテキスト枠の直接注入（他からの誤置換を完全に遮断）
+        # 1. テキスト枠の設定（★STEP 4 も含め直接セットで確実に反映★）
         if k in step_texts:
             t_shp = step_texts[k]
             t_shp.top = int(start_top + (k - 1) * step_gap)
@@ -405,7 +408,7 @@ def build_perfect_steps(slide, step_descs):
                         r.font.size = Pt(13.0)
                         r.font.name = "メイリオ"
 
-        # 2. STEPバッジアイコン（9pt メイリオ白太字）
+        # 2. バッジ（アイコン）の設定（★9pt メイリオ白太字 ＋ 上下左右完全中央揃え★）
         if k in step_badges:
             b_shp = step_badges[k]
             b_shp.height = Pt(16.0)
@@ -421,6 +424,7 @@ def build_perfect_steps(slide, step_descs):
                 btf.margin_top = Pt(0)
                 btf.margin_bottom = Pt(0)
                 for p in btf.paragraphs:
+                    p.alignment = PP_ALIGN.CENTER # ★水平中央揃え★
                     p.font.name = "メイリオ"
                     p.font.size = Pt(9.0)
                     p.font.bold = True
@@ -432,7 +436,7 @@ def build_perfect_steps(slide, step_descs):
                         r.font.color.rgb = RGBColor(255, 255, 255)
 
 # ==========================================
-# 要素位置・整列エンジン（主要見出し・補助項目赤バーを完璧位置合わせ）
+# 要素位置・整列エンジン（主要見出し・補助項目の赤バー位置を下め垂直同期）
 # ==========================================
 def align_all_headers_and_connectors(slide):
     main_title = None
@@ -472,7 +476,33 @@ def adjust_shapes_for_chart(slide):
             shape.width = Pt(220)
 
 # ==========================================
-# タイトル段落の番号赤色化 ＆ タイトルフォントサイズ完全保持
+# INDEX目次スライドの各章タイトルの数字赤色化
+# ==========================================
+def format_index_title_paragraph(p, text):
+    """INDEX（目次）スライドのタイトル『01 章タイトル』の数字部分のみ赤色にする"""
+    p.text = ""
+    match = re.match(r'^(\d{2})\s*(.*)$', str(text).strip())
+    if match:
+        num_str = match.group(1)
+        title_str = match.group(2)
+
+        r0 = p.add_run()
+        r0.text = f"{num_str} "
+        r0.font.name = "メイリオ"
+        r0.font.size = Pt(13.0)
+        r0.font.bold = True
+        r0.font.color.rgb = RGBColor(217, 48, 37)
+
+        r1 = p.add_run()
+        r1.text = title_str
+        r1.font.name = "メイリオ"
+        r1.font.size = Pt(13.0)
+        r1.font.bold = True
+    else:
+        p.text = str(text)
+
+# ==========================================
+# スライドタイトルの数字赤色化 ＆ フォントサイズ完全保持
 # ==========================================
 def format_chapter_title_paragraph(p, ch_num, ch_title):
     clean_title = re.sub(r'^\d+[\.\s_]*', '', str(ch_title)).strip() if ch_title else ""
@@ -529,7 +559,6 @@ def process_paragraph_runs(p, replace_map, chapter_num=None, chapter_title=None,
             for r in p.runs[1:]:
                 r.text = ""
 
-    # 表紙スライド・STEP項目以外の本文テキストについてのみ自動縮小・調整を適用
     if not is_cover and p_text and len(p_text.strip()) > 5:
         if not any(tag in p_text for tag in ["[[章タイトル]]", "STEP", "P1", "P2"]):
             auto_fit_font_size_and_spacing(p, p_text, min_size_pt=9.5)
@@ -556,6 +585,11 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
     for shape in slide.shapes:
         sname_upper = shape.name.upper()
         raw_text = shape.text_frame.text if shape.has_text_frame else ""
+
+        # INDEXスライド（目次）の数字赤色表示
+        if "INDEX_" in sname_upper and "_TITLE" in sname_upper:
+            if shape.has_text_frame and shape.text_frame.text:
+                format_index_title_paragraph(shape.text_frame.paragraphs[0], shape.text_frame.text)
 
         if shape.has_text_frame:
             txt = raw_text.strip()
