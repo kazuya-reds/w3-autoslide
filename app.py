@@ -32,7 +32,6 @@ st.markdown("""
         border-radius: 8px !important;
         font-size: 16px !important;
     }
-    /* Primaryボタン（メイン生成ボタン）を強固に赤背景・太字白文字へ装飾 */
     button[data-testid="baseButton-primary"], div.stButton > button[kind="primary"] {
         background-color: #ff4b4b !important;
         color: #ffffff !important;
@@ -99,12 +98,18 @@ def call_gemini_with_retry(client, prompt, max_retries=5):
     raise last_exception if last_exception else Exception("AIサーバーの混雑が続いています。1〜2分置かれてから再度お試しください。")
 
 # ==========================================
-# クリーニング ＆ サニタイズ
+# クリーニング ＆ サニタイズ（空行の自動除去）
 # ==========================================
 def clean_notice_text(text):
     if not text:
         return ""
     return re.sub(r'^(?:[※\*\:\s]|注意[：:]|注[：:])+', '', str(text).strip())
+
+def sanitize_text_empty_lines(text):
+    """連続する改行（空行）を1つに統合して見栄えを整える"""
+    if not text:
+        return ""
+    return re.sub(r'\n{2,}', '\n', str(text).strip())
 
 def sanitize_main_item(main_item, clean_ch_title):
     main_item = str(main_item).strip() if main_item else ""
@@ -322,7 +327,7 @@ def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
             pass
 
 # ==========================================
-# STEP 1〜4 完全構築 ＆ 余白拡大 ＆ アイコン中央揃え
+# STEP 1〜4 完全固定構築 ＆ 余白拡大 ＆ アイコン上下左右完全中央揃え
 # ==========================================
 def build_perfect_steps(slide, step_descs):
     main_body_shape = None
@@ -363,7 +368,7 @@ def build_perfect_steps(slide, step_descs):
                 new_t.name = f"STEP_{k}_TEXT"
                 step_texts[k] = new_t
 
-    # ★不要な下部枠 ＆ ネイビーステップコネクタ線を消去★
+    # 不要な下部重複枠 ＆ 不要なネイビーの縦線コネクタを消去
     shapes_to_del = []
     for shp in slide.shapes:
         sname = shp.name.upper()
@@ -379,18 +384,18 @@ def build_perfect_steps(slide, step_descs):
         except Exception:
             pass
 
-    # ★上の文章と STEP 1 の間の縦マージンを本文1行分（約24pt）しっかり広げる★
+    # 本文（MAIN_BODY_TEXT）の下端から本文1行分（約28pt）しっかり間隔を空ける
     est_body_height = Pt(24)
     if main_body_shape and main_body_shape.has_text_frame:
         txt = main_body_shape.text_frame.text.strip()
         line_cnt = txt.count('\n') + len(txt) // 30 + 1
         est_body_height = max(Pt(24), Pt(line_cnt * 18))
 
-    start_top = int(main_body_shape.top + est_body_height + Pt(24.0)) if main_body_shape else Pt(205.0)
+    start_top = int(main_body_shape.top + est_body_height + Pt(28.0)) if main_body_shape else Pt(210.0)
     step_gap = Pt(32.0)
 
     for k in range(1, 5):
-        # 1. テキスト枠の設定（★STEP 4 も含め直接セットで確実に反映★）
+        # 1. テキスト枠の設定（STEP 4 まで確実に直接代入）
         if k in step_texts:
             t_shp = step_texts[k]
             t_shp.top = int(start_top + (k - 1) * step_gap)
@@ -423,8 +428,19 @@ def build_perfect_steps(slide, step_descs):
                 btf.vertical_anchor = MSO_ANCHOR.MIDDLE
                 btf.margin_top = Pt(0)
                 btf.margin_bottom = Pt(0)
+                btf.margin_left = Pt(0)
+                btf.margin_right = Pt(0)
+                
+                # XMLレベルで上下中央配置（anchor="ctr"）を直注入
+                try:
+                    bodyPr = btf._txBody.bodyPr
+                    bodyPr.attrib['anchor'] = 'ctr'
+                except Exception:
+                    pass
+
                 for p in btf.paragraphs:
-                    p.alignment = PP_ALIGN.CENTER # ★水平中央揃え★
+                    p.alignment = PP_ALIGN.CENTER
+                    p.line_spacing = 1.0
                     p.font.name = "メイリオ"
                     p.font.size = Pt(9.0)
                     p.font.bold = True
@@ -436,11 +452,12 @@ def build_perfect_steps(slide, step_descs):
                         r.font.color.rgb = RGBColor(255, 255, 255)
 
 # ==========================================
-# 要素位置・整列エンジン（主要見出し・補助項目の赤バー位置を下め垂直同期）
+# 要素位置・整列エンジン（P2被り解消・P3左ラインミリ単位完全一致・不要線削除）
 # ==========================================
-def align_all_headers_and_connectors(slide):
+def align_all_headers_and_connectors(slide, has_sub_item=True, has_chart=False):
     main_title = None
     sub_title = None
+    main_body = None
 
     for shp in slide.shapes:
         sname = shp.name.upper()
@@ -448,27 +465,57 @@ def align_all_headers_and_connectors(slide):
             main_title = shp
         elif "SUB_SECTION_TITLE" in sname or ("SECTION_TITLE" in sname and "MAIN" not in sname):
             sub_title = shp
+        elif "MAIN_BODY_TEXT" in sname:
+            main_body = shp
 
-    # 1. 主要見出しの赤バー (SECTION_LINE) の位置を下め垂直同期
+    # 1. 補助項目が不要な場合（グラフスライドやSTEPスライド等）、不要な縦線コネクタを完全削除
+    if not has_sub_item or has_chart:
+        shapes_to_del = []
+        for shp in slide.shapes:
+            sname = shp.name.upper()
+            if "コネクタ" in shp.name or ("LINE" in sname and "SECTION_LINE" not in sname):
+                shapes_to_del.append(shp)
+        for shp in shapes_to_del:
+            try:
+                sp = shp._element
+                sp.getparent().remove(sp)
+            except Exception:
+                pass
+
+    # 2. 主要見出しの赤バー (SECTION_LINE) の位置を文字と完全同期 (left=113.7pt, width=4.0pt)
     for shp in slide.shapes:
         sname = shp.name.upper()
         if "SECTION_LINE" in sname or (sname == "SECTION_LINE"):
+            shp.left = Pt(113.7)
             shp.width = Pt(4.0)
             shp.height = Pt(19.3)
             if main_title:
                 shp.top = int(main_title.top + Pt(5.5))
+                main_title.left = Pt(124.6)
 
-    # 2. 補助項目タイトルの縦線コネクタ (直線コネクタ 16 等) の位置を下め垂直同期
-    for shp in slide.shapes:
-        sname = shp.name.upper()
-        if "コネクタ" in shp.name or "LINE" in sname:
-            if "SECTION_LINE" not in sname:
-                if sub_title:
-                    shp.top = int(sub_title.top + Pt(4.0))
-                    shp.height = Pt(16.0)
+    # 3. グラフスライド (P2) の見出しと本文の文字被り解消
+    if has_chart and main_title and main_body:
+        main_title.width = Pt(220)
+        t_text = main_title.text_frame.text.strip()
+        lines = len(t_text) // 12 + t_text.count('\n') + 1
+        title_h = max(Pt(26.7), Pt(lines * 22))
+        main_body.top = int(main_title.top + title_h + Pt(12.0))
+        main_body.width = Pt(220)
+
+    # 4. 補助項目タイトルの縦線とテキストの左座標を主要見出しとミリ単位完全一致（中心115.7pt, 文字124.6pt）
+    if has_sub_item and not has_chart:
+        for shp in slide.shapes:
+            sname = shp.name.upper()
+            if "コネクタ" in shp.name or "LINE" in sname:
+                if "SECTION_LINE" not in sname:
+                    if sub_title:
+                        shp.left = Pt(115.7) # 赤バー(113.7+2.0=115.7)の中心と完全一致
+                        shp.top = int(sub_title.top + Pt(4.0))
+                        shp.height = Pt(16.0)
+                        sub_title.left = Pt(124.6) # 主要見出しと文字開始位置を完全一致
 
 def adjust_shapes_for_chart(slide):
-    align_all_headers_and_connectors(slide)
+    align_all_headers_and_connectors(slide, has_sub_item=False, has_chart=True)
     for shape in slide.shapes:
         if "SECTION_LINE" in shape.name or ("LINE" in shape.name.upper() and shape.shape_type == 1):
             shape.width = Pt(4.0)
@@ -479,7 +526,6 @@ def adjust_shapes_for_chart(slide):
 # INDEX目次スライドの各章タイトルの数字赤色化
 # ==========================================
 def format_index_title_paragraph(p, text):
-    """INDEX（目次）スライドのタイトル『01 章タイトル』の数字部分のみ赤色にする"""
     p.text = ""
     match = re.match(r'^(\d{2})\s*(.*)$', str(text).strip())
     if match:
@@ -529,7 +575,7 @@ def format_chapter_title_paragraph(p, ch_num, ch_title):
     if base_font_size: r1.font.size = base_font_size
 
 # ==========================================
-# 段落置換処理
+# 段落置換処理（空行自動除去付き）
 # ==========================================
 def process_paragraph_runs(p, replace_map, chapter_num=None, chapter_title=None, is_cover=False):
     if "00" in p.text or "[[章タイトル]]" in p.text:
@@ -559,14 +605,18 @@ def process_paragraph_runs(p, replace_map, chapter_num=None, chapter_title=None,
             for r in p.runs[1:]:
                 r.text = ""
 
-    if not is_cover and p_text and len(p_text.strip()) > 5:
-        if not any(tag in p_text for tag in ["[[章タイトル]]", "STEP", "P1", "P2"]):
-            auto_fit_font_size_and_spacing(p, p_text, min_size_pt=9.5)
+    # 空行の除去クリーンアップ
+    if p.text and "\n\n" in p.text:
+        p.text = sanitize_text_empty_lines(p.text)
+
+    if not is_cover and p.text and len(p.text.strip()) > 5:
+        if not any(tag in p.text for tag in ["[[章タイトル]]", "STEP", "P1", "P2"]):
+            auto_fit_font_size_and_spacing(p, p.text, min_size_pt=9.5)
 
 # ==========================================
 # スライド要素置換処理
 # ==========================================
-def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=None, assigned_files=None, captions=None, is_cover=False, step_descs=None):
+def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=None, assigned_files=None, captions=None, is_cover=False, step_descs=None, has_chart=False):
     shapes_to_remove = []
     has_assigned = assigned_files is not None and len(assigned_files) > 0
 
@@ -580,7 +630,7 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
     has_body = bool(body_val and str(body_val).strip())
 
     if not is_cover:
-        align_all_headers_and_connectors(slide)
+        align_all_headers_and_connectors(slide, has_sub_item=has_sub_item, has_chart=has_chart)
 
     for shape in slide.shapes:
         sname_upper = shape.name.upper()
@@ -686,7 +736,7 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
         except Exception:
             pass
 
-    # ★すべての置換処理が完了した最最終工程で、STEP 1〜4 を確定注入（他からの誤置換を完全に遮断）★
+    # すべての置換処理の最最終工程で、STEP 1〜4 を確定注入（他からの誤置換を完全に遮断）
     if not is_cover and step_descs:
         build_perfect_steps(slide, step_descs)
 
@@ -846,7 +896,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
             with ec_cols1:
                 e_title = st.text_input(f"スライド{idx+1} タイトル", value=ch.get("chapter_title", ""), key=f"title_{idx}")
                 e_main = st.text_input(f"スライド{idx+1} 主要見出し（赤帯・15文字以内）", value=ch.get("main_item", ""), key=f"main_{idx}")
-                e_body = st.text_area(f"スライド{idx+1} 本文", value=ch.get("body", ""), height=100, key=f"body_{idx}")
+                e_body = st.text_area(f"スライド{idx+1} 本文", value=sanitize_text_empty_lines(ch.get("body", "")), height=100, key=f"body_{idx}")
 
             with ec_cols2:
                 current_layout_key = str(ch.get("layout_type", "text")).lower()
@@ -858,7 +908,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 e_layout = LAYOUT_REVERSE_MAP[selected_label]
                 
                 e_sub_title = st.text_input(f"補助項目 タイトル", value=ch.get("sub_title", ""), key=f"sub_t_{idx}")
-                e_sub_body = st.text_area(f"補助項目 本文", value=ch.get("sub_body", ""), height=68, key=f"sub_b_{idx}")
+                e_sub_body = st.text_area(f"補助項目 本文", value=sanitize_text_empty_lines(ch.get("sub_body", "")), height=68, key=f"sub_b_{idx}")
 
             if e_layout == "step":
                 st.markdown("**ステップ詳細（最大4ステップ）**")
@@ -912,9 +962,9 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 "chapter_title": e_title,
                 "layout_type": e_layout,
                 "main_item": e_main,
-                "body": e_body,
+                "body": sanitize_text_empty_lines(e_body),
                 "sub_title": e_sub_title,
-                "sub_body": e_sub_body,
+                "sub_body": sanitize_text_empty_lines(e_sub_body),
                 "notice": ch.get("notice", ""),
                 "step_descs": e_s_descs,
                 "table": ch.get("table", {}),
@@ -1039,14 +1089,14 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
 
                     ch_map = {}
                     ch_map["[[主要項目]]"] = main_item_text
-                    ch_map["[[本文]]"] = ch.get("body", "")
+                    ch_map["[[本文]]"] = sanitize_text_empty_lines(ch.get("body", ""))
 
                     if should_draw_chart:
                         ch_map["[[補助項目]]"] = ""
                         ch_map["[[補助項目の本文]]"] = ""
                     else:
                         ch_map["[[補助項目]]"] = ch.get("sub_title", "実行ステップ")
-                        ch_map["[[補助項目の本文]]"] = ch.get("sub_body", ch.get("body", ""))
+                        ch_map["[[補助項目の本文]]"] = sanitize_text_empty_lines(ch.get("sub_body", ch.get("body", "")))
 
                     notice_val = clean_notice_text(ch.get("notice", ""))
                     ch_map["[[補足文]]"] = notice_val
@@ -1069,7 +1119,8 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         ch_slide, ch_map,
                         chapter_num=ch_num_str, chapter_title=clean_ch_title,
                         assigned_files=assigned_files, captions=captions,
-                        step_descs=step_descs if layout_type == "step" or "アクション" in clean_ch_title or "手順" in clean_ch_title else None
+                        step_descs=step_descs if layout_type == "step" or "アクション" in clean_ch_title or "手順" in clean_ch_title else None,
+                        has_chart=should_draw_chart
                     )
 
                     if should_draw_chart and chart_info:
