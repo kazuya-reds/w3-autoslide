@@ -66,7 +66,7 @@ LAYOUT_MAP = {
     "text": "標準テキスト（文章・概要）",
     "step": "実行ステップ（フロー・手順）",
     "checklist": "チェックリスト（確認項目）",
-    "table": "表組み（料金・仕様一覧）"
+    "table": "表組み（料金・仕様・管理一覧）"
 }
 LAYOUT_REVERSE_MAP = {v: k for k, v in LAYOUT_MAP.items()}
 
@@ -98,7 +98,7 @@ def call_gemini_with_retry(client, prompt, max_retries=5):
     raise last_exception if last_exception else Exception("AIサーバーの混雑が続いています。1〜2分置かれてから再度お試しください。")
 
 # ==========================================
-# クリーニング ＆ サニタイズ（空行の自動除去）
+# クリーニング ＆ サニタイズ
 # ==========================================
 def clean_notice_text(text):
     if not text:
@@ -106,7 +106,6 @@ def clean_notice_text(text):
     return re.sub(r'^(?:[※\*\:\s]|注意[：:]|注[：:])+', '', str(text).strip())
 
 def sanitize_text_empty_lines(text):
-    """連続する改行（空行）を1つに統合して見栄えを整える"""
     if not text:
         return ""
     return re.sub(r'\n{2,}', '\n', str(text).strip())
@@ -124,6 +123,10 @@ def sanitize_main_item(main_item, clean_ch_title):
                 main_item = "増収要因と一時的影響"
             elif "アクション" in clean_ch_title or "手順" in clean_ch_title:
                 main_item = "今後の4つの実行計画"
+            elif "チェック" in clean_ch_title or "確認" in clean_ch_title:
+                main_item = "各業務の実行と承認確認"
+            elif "表" in clean_ch_title or "タスク" in clean_ch_title or "管理" in clean_ch_title:
+                main_item = "実行タスクの進捗一覧"
             else:
                 main_item = clean_ch_title[:12]
     return main_item
@@ -368,7 +371,7 @@ def build_perfect_steps(slide, step_descs):
                 new_t.name = f"STEP_{k}_TEXT"
                 step_texts[k] = new_t
 
-    # 不要な下部重複枠 ＆ 不要なネイビーの縦線コネクタを消去
+    # 不要な下部重複枠 ＆ 不要な縦線コネクタを消去
     shapes_to_del = []
     for shp in slide.shapes:
         sname = shp.name.upper()
@@ -395,7 +398,6 @@ def build_perfect_steps(slide, step_descs):
     step_gap = Pt(32.0)
 
     for k in range(1, 5):
-        # 1. テキスト枠の設定（STEP 4 まで確実に直接代入）
         if k in step_texts:
             t_shp = step_texts[k]
             t_shp.top = int(start_top + (k - 1) * step_gap)
@@ -413,7 +415,6 @@ def build_perfect_steps(slide, step_descs):
                         r.font.size = Pt(13.0)
                         r.font.name = "メイリオ"
 
-        # 2. バッジ（アイコン）の設定（★9pt メイリオ白太字 ＋ 上下左右完全中央揃え★）
         if k in step_badges:
             b_shp = step_badges[k]
             b_shp.height = Pt(16.0)
@@ -431,7 +432,6 @@ def build_perfect_steps(slide, step_descs):
                 btf.margin_left = Pt(0)
                 btf.margin_right = Pt(0)
                 
-                # XMLレベルで上下中央配置（anchor="ctr"）を直注入
                 try:
                     bodyPr = btf._txBody.bodyPr
                     bodyPr.attrib['anchor'] = 'ctr'
@@ -468,7 +468,7 @@ def align_all_headers_and_connectors(slide, has_sub_item=True, has_chart=False):
         elif "MAIN_BODY_TEXT" in sname:
             main_body = shp
 
-    # 1. 補助項目が不要な場合（グラフスライドやSTEPスライド等）、不要な縦線コネクタを完全削除
+    # 1. 補助項目が不要な場合（グラフ・STEP・チェックリスト等）、不要な縦線コネクタを完全削除
     if not has_sub_item or has_chart:
         shapes_to_del = []
         for shp in slide.shapes:
@@ -509,10 +509,10 @@ def align_all_headers_and_connectors(slide, has_sub_item=True, has_chart=False):
             if "コネクタ" in shp.name or "LINE" in sname:
                 if "SECTION_LINE" not in sname:
                     if sub_title:
-                        shp.left = Pt(115.7) # 赤バー(113.7+2.0=115.7)の中心と完全一致
+                        shp.left = Pt(115.7)
                         shp.top = int(sub_title.top + Pt(4.0))
                         shp.height = Pt(16.0)
-                        sub_title.left = Pt(124.6) # 主要見出しと文字開始位置を完全一致
+                        sub_title.left = Pt(124.6)
 
 def adjust_shapes_for_chart(slide):
     align_all_headers_and_connectors(slide, has_sub_item=False, has_chart=True)
@@ -605,16 +605,15 @@ def process_paragraph_runs(p, replace_map, chapter_num=None, chapter_title=None,
             for r in p.runs[1:]:
                 r.text = ""
 
-    # 空行の除去クリーンアップ
     if p.text and "\n\n" in p.text:
         p.text = sanitize_text_empty_lines(p.text)
 
     if not is_cover and p.text and len(p.text.strip()) > 5:
-        if not any(tag in p.text for tag in ["[[章タイトル]]", "STEP", "P1", "P2"]):
+        if not any(tag in p.text for tag in ["[[章タイトル]]", "STEP", "P1", "P2", "□"]):
             auto_fit_font_size_and_spacing(p, p.text, min_size_pt=9.5)
 
 # ==========================================
-# スライド要素置換処理
+# スライド要素置換処理（チェックリスト・表組み完全対応）
 # ==========================================
 def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=None, assigned_files=None, captions=None, is_cover=False, step_descs=None, has_chart=False):
     shapes_to_remove = []
@@ -636,7 +635,6 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
         sname_upper = shape.name.upper()
         raw_text = shape.text_frame.text if shape.has_text_frame else ""
 
-        # INDEXスライド（目次）の数字赤色表示
         if "INDEX_" in sname_upper and "_TITLE" in sname_upper:
             if shape.has_text_frame and shape.text_frame.text:
                 format_index_title_paragraph(shape.text_frame.paragraphs[0], shape.text_frame.text)
@@ -656,8 +654,9 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
                 continue
             if shape.has_text_frame:
                 if any(tag in raw_text for tag in ["[[注意文]]", "[[補足文]]", "[[表の注記]]"]):
-                    shapes_to_remove.append(shape)
-                    continue
+                    if not replace_map.get("[[表の注記]]", "").strip():
+                        shapes_to_remove.append(shape)
+                        continue
                 if raw_text.strip() in ["注意", "補足", "※", "注"]:
                     shapes_to_remove.append(shape)
                     continue
@@ -716,6 +715,7 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
 
             tf.word_wrap = True
             for p in tf.paragraphs:
+                # ★チェック項目の空行消去ロジック（不要な□を段落ごと消去）★
                 if "[[チェック項目" in p.text:
                     for k in range(1, 7):
                         tag_k = f"[[チェック項目{k}]]"
@@ -724,10 +724,17 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
 
                 process_paragraph_runs(p, replace_map, chapter_num, chapter_title, is_cover=is_cover)
 
+        # ★表組み（テーブル）の各セル置換 ＆ メイリオ11pt適用★
         if shape.has_table:
-            for cell in shape.table.iter_cells():
-                for p in cell.text_frame.paragraphs:
-                    process_paragraph_runs(p, replace_map, is_cover=is_cover)
+            for row in shape.table.rows:
+                for cell in row.cells:
+                    for p in cell.text_frame.paragraphs:
+                        process_paragraph_runs(p, replace_map, is_cover=is_cover)
+                        p.font.name = "メイリオ"
+                        p.font.size = Pt(11.0)
+                        for r in p.runs:
+                            r.font.name = "メイリオ"
+                            r.font.size = Pt(11.0)
 
     for shp in shapes_to_remove:
         try:
@@ -736,7 +743,6 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
         except Exception:
             pass
 
-    # すべての置換処理の最最終工程で、STEP 1〜4 を確定注入（他からの誤置換を完全に遮断）
     if not is_cover and step_descs:
         build_perfect_steps(slide, step_descs)
 
@@ -782,7 +788,19 @@ raw_memo = st.text_area("資料の内容メモ",
 1. 顧客購買データの詳細分析
 2. 高単価ターゲット層へのアプローチ強化
 3. 新プロモーションの実施
-4. 月商200万円の継続的維持""", height=220)
+4. 月商200万円の継続的維持
+
+確認事項チェックリスト：
+・顧客購買データのクレンジングと抽出完了
+・高単価ターゲット層のセグメント確定
+・プロモーション施策のKPIおよび予算決裁
+・月次売上進捗レビュー体制の構築
+
+実行タスク管理表：
+施策項目, 担当部門, 完了期日, 進捗状況
+データ分析基盤の構築, DX推進部, 11月15日, 順調
+ターゲット層への提案骨子確定, 営業推進室, 11月30日, 着手済
+新プロモーション展開, マーケティング部, 12月20日, 企画中""", height=240)
 
 
 # ==========================================
@@ -816,20 +834,32 @@ with col_btn1:
                     {json.dumps(prompt_data, ensure_ascii=False, indent=2)}
 
                     【レイアウト＆情報抽出ルール】
-                    1. メモの主要項目を整理し、プレゼンに最適な3〜7個の章（chapters）にまとめてください。
+                    1. メモの主要項目を整理し、プレゼンに最適な章（chapters）にまとめてください。
                     2. 各章のコンテンツに合わせて、最適な "layout_type" を以下から選定してください:
                        - "line_chart": 月別推移、売上推移、時系列トレンドなどの数値変化がある場合
                        - "bar_chart": 項目別比較、実績数値の比較、カテゴリ別実績がある場合
                        - "text": 概要・課題・特徴・メリット・期待効果・要因分析など
                        - "step": 導入手順・運用フロー・タイムライン・実行ステップ（最大4ステップ）
-                       - "checklist": 確認事項・必要書類・チェックリストなど
-                       - "table": 料金プランや機能比較などのテキスト表
-                    3. "main_item" について:
+                       - "checklist": 確認事項・必要書類・チェックリストなど（最大6項目）
+                       - "table": タスク管理表、料金プラン、仕様一覧、比較表などのテキスト表（2〜4列、最大3行）
+                    3. "checklist" の場合:
+                       - "checklist_intro": 導入文（例: 「業務遂行における重要確認事項です。」）
+                       - "checklist_items": メモから抽出した最大6つのチェック項目文字列配列
+                       - "checklist_outro": 完了後の案内文（例: 「全項目の確認完了後、責任者へご報告ください。」）
+                    4. "table" の場合:
+                       - "table": {{
+                           "headers": ["列1", "列2", "列3", "列4"],
+                           "rows": [
+                             ["データ1-1", "データ1-2", "データ1-3", "データ1-4"],
+                             ["データ2-1", "データ2-2", "データ2-3", "データ2-4"],
+                             ["データ3-1", "データ3-2", "データ3-3", "データ3-4"]
+                           ],
+                           "note": "※注記（任意）"
+                         }}
+                    5. "main_item" について:
                        - 赤帯に配置する15文字以内の短いキャッチコピー（見出し）を指定してください。
-                    4. "step_descs" について:
-                       - layout_type が "step" の場合、メモから具体的なアクションやステップを4つ抽出し、"step_descs" 配列に格納してください。
-                    5. "chart_info" について:
-                       - メモ内に売上・件数・数値・月別などのデータがある場合は、必ず "chart_info" に "title", "categories", "series_name", "values" を格納してください。
+                    6. "chart_info" について:
+                       - 売上や推移データがある場合は "chart_info" を必ず格納してください。
 
                     【出力形式】
                     純粋なJSONのみを出力してください。
@@ -843,15 +873,19 @@ with col_btn1:
                           "sub_title": "補助項目タイトル",
                           "sub_body": "補助項目本文",
                           "notice": "",
-                          "step_descs": [
-                            "顧客購買データの詳細分析",
-                            "高単価ターゲット層へのアプローチ強化",
-                            "新プロモーションの実施",
-                            "月商200万円の継続的維持"
-                          ],
-                          "table": {{ "headers": [], "rows": [] }},
-                          "assigned_image_indices": [],
-                          "image_captions": [],
+                          "step_descs": ["ステップ1", "ステップ2", "ステップ3", "ステップ4"],
+                          "checklist_intro": "確認事項の導入文",
+                          "checklist_items": ["項目1", "項目2", "項目3", "項目4"],
+                          "checklist_outro": "確認完了後の案内文",
+                          "table": {{
+                            "headers": ["施策項目", "担当部門", "完了期日", "状況"],
+                            "rows": [
+                              ["タスク1", "担当A", "11/15", "着手済"],
+                              ["タスク2", "担当B", "11/30", "未着手"],
+                              ["タスク3", "担当C", "12/20", "企画中"]
+                            ],
+                            "note": "※注記文"
+                          }},
                           "chart_info": {{
                             "title": "直近4ヶ月の売上推移",
                             "categories": ["7月", "8月", "9月", "10月"],
@@ -910,6 +944,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 e_sub_title = st.text_input(f"補助項目 タイトル", value=ch.get("sub_title", ""), key=f"sub_t_{idx}")
                 e_sub_body = st.text_area(f"補助項目 本文", value=sanitize_text_empty_lines(ch.get("sub_body", "")), height=68, key=f"sub_b_{idx}")
 
+            # 1. STEP詳細フォーム
             if e_layout == "step":
                 st.markdown("**ステップ詳細（最大4ステップ）**")
                 s_descs = ch.get("step_descs", [])
@@ -930,8 +965,68 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
             else:
                 e_s_descs = ch.get("step_descs", [])
 
+            # 2. チェックリスト詳細フォーム
+            if e_layout == "checklist" or "確認" in e_title or "チェック" in e_title:
+                st.markdown("**✅ チェックリスト設定（最大6項目）**")
+                c_intro_val = st.text_input("チェックリスト導入文", value=ch.get("checklist_intro", "各フェーズの完了条件および重要確認事項です。"), key=f"c_intro_{idx}")
+                
+                c_items_def = ch.get("checklist_items", [])
+                if not c_items_def:
+                    c_items_def = [
+                        "顧客データの集計と整合性確認",
+                        "ターゲット層への提案骨子確定",
+                        "新プロモーション予算の決裁取得",
+                        "月次進捗レビュー体制の構築"
+                    ]
+                e_c_items = []
+                ci_cols = st.columns(2)
+                for ci in range(6):
+                    def_item = c_items_def[ci] if len(c_items_def) > ci else ""
+                    with ci_cols[ci % 2]:
+                        val_item = st.text_input(f"チェック項目 {ci+1}", value=def_item, key=f"ci_{idx}_{ci}")
+                        if val_item.strip():
+                            e_c_items.append(val_item.strip())
+                
+                c_outro_val = st.text_input("確認後の案内文", value=ch.get("checklist_outro", "上記全項目の確認完了後、責任者へご共有ください。"), key=f"c_outro_{idx}")
+            else:
+                c_intro_val = ch.get("checklist_intro", "")
+                e_c_items = ch.get("checklist_items", [])
+                c_outro_val = ch.get("checklist_outro", "")
+
+            # 3. テーブル（表組み）詳細フォーム
+            if e_layout == "table" or "表" in e_title or "管理" in e_title or "プラン" in e_title:
+                st.markdown("**📋 表組み（テーブル）データ設定**")
+                tbl_raw = ch.get("table", {})
+                h_list = tbl_raw.get("headers", ["施策項目", "担当部門", "完了期日", "状況"])
+                r_list = tbl_raw.get("rows", [
+                    ["データ分析基盤の構築", "DX推進部", "11月15日", "順調"],
+                    ["ターゲット層へのアプローチ", "営業推進室", "11月30日", "着手済"],
+                    ["新プロモーション展開", "マーケティング部", "12月20日", "企画中"]
+                ])
+                
+                t_cols_input = st.text_input("列見出し（カンマ区切り・2〜4列）", value=", ".join(h_list), key=f"th_{idx}")
+                e_headers = [c.strip() for c in t_cols_input.split(",") if c.strip()]
+                
+                st.caption("各行のデータ（カンマ区切り）")
+                e_rows = []
+                for ri in range(3):
+                    default_row_str = ", ".join(r_list[ri]) if len(r_list) > ri else ""
+                    row_str = st.text_input(f"{ri+1}行目", value=default_row_str, key=f"tr_{idx}_{ri}")
+                    if row_str.strip():
+                        e_rows.append([c.strip() for c in row_str.split(",")])
+                        
+                t_note = st.text_input("表の注記（任意）", value=tbl_raw.get("note", "※進捗状況は週次定例にて更新します。"), key=f"tn_{idx}")
+                e_table = {
+                    "headers": e_headers,
+                    "rows": e_rows,
+                    "note": t_note
+                }
+            else:
+                e_table = ch.get("table", {})
+
+            # 4. グラフ設定フォーム
             c_info = ch.get("chart_info") or extract_chart_data_from_memo(raw_memo)
-            if e_layout in ["line_chart", "bar_chart"] or idx == 0:
+            if e_layout in ["line_chart", "bar_chart"] or (idx == 0 and ("推移" in e_title or "売上" in e_title)):
                 st.markdown("**📊 グラフデータ設定**")
                 g_cols = st.columns(3)
                 with g_cols[0]:
@@ -967,7 +1062,10 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 "sub_body": sanitize_text_empty_lines(e_sub_body),
                 "notice": ch.get("notice", ""),
                 "step_descs": e_s_descs,
-                "table": ch.get("table", {}),
+                "checklist_intro": c_intro_val,
+                "checklist_items": e_c_items,
+                "checklist_outro": c_outro_val,
+                "table": e_table,
                 "assigned_image_indices": ch.get("assigned_image_indices", []),
                 "image_captions": ch.get("image_captions", []),
                 "chart_info": edited_c_info
@@ -975,7 +1073,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
 
     st.markdown("---")
     
-    # 赤色太字カスタムボタン (type="primary" で強固指定)
+    # 赤色太字カスタムボタン
     if st.button("✨ この内容で PowerPoint 資料を自動生成する ✨", key="generate_pptx_btn", type="primary", use_container_width=True):
         status_box = st.empty()
         with st.spinner("WEB編集結果を元にPowerPoint資料を構築中..."):
@@ -1005,7 +1103,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 today_str = datetime.date.today().strftime("%Y/%m/%d")
                 new_created_slides = []
 
-                # 1. 表紙スライド（バランス・サイズ100%完全保持）
+                # 1. 表紙スライド
                 cover_slide = duplicate_slide_safe(prs, 0)
                 cover_map = {
                     "[[資料タイトル]]": doc_title,
@@ -1054,23 +1152,24 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     captions = ch.get("image_captions", [])
 
                     chart_info = ch.get("chart_info")
-                    has_values = bool(chart_info and isinstance(chart_info.get("values"), list) and len(chart_info.get("values")) > 0)
                     is_chart_keyword = any(kw in clean_ch_title for kw in ["推移", "売上", "実績", "比較", "グラフ", "データ"])
 
                     should_draw_chart = (not chart_created) and (
                         "line" in layout_type or "bar" in layout_type or "chart" in layout_type or
-                        is_chart_keyword or ch_idx == 0
+                        (is_chart_keyword and ch_idx == 0)
                     )
 
+                    # ★テンプレートインデックス判定★
                     target_template_idx = 2
                     if layout_type == "checklist" or "確認" in clean_ch_title or "チェック" in clean_ch_title:
                         target_template_idx = 9 if tpl_slide_count > 9 else 2
                     elif layout_type == "step" or "フロー" in clean_ch_title or "流れ" in clean_ch_title or "手順" in clean_ch_title or "アクション" in clean_ch_title:
                         target_template_idx = 5 if tpl_slide_count > 5 else 2
-                    elif layout_type == "table" or "プラン" in clean_ch_title or "料金" in clean_ch_title:
+                    elif layout_type == "table" or "表" in clean_ch_title or "タスク" in clean_ch_title or "管理" in clean_ch_title or "プラン" in clean_ch_title or "料金" in clean_ch_title:
                         tbl_data = ch.get("table", {})
-                        cols = ch.get("column_count", len(tbl_data.get("headers", [])))
-                        if cols == 4 and tpl_slide_count > 8: target_template_idx = 8
+                        headers = tbl_data.get("headers", [])
+                        cols = len(headers) if headers else 3
+                        if cols >= 4 and tpl_slide_count > 8: target_template_idx = 8
                         elif cols == 3 and tpl_slide_count > 7: target_template_idx = 7
                         elif tpl_slide_count > 6: target_template_idx = 6
                         else: target_template_idx = 2
@@ -1087,6 +1186,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
 
                     main_item_text = sanitize_main_item(ch.get("main_item", ""), clean_ch_title)
 
+                    # ★置換マップの完全生成★
                     ch_map = {}
                     ch_map["[[主要項目]]"] = main_item_text
                     ch_map["[[本文]]"] = sanitize_text_empty_lines(ch.get("body", ""))
@@ -1095,13 +1195,14 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         ch_map["[[補助項目]]"] = ""
                         ch_map["[[補助項目の本文]]"] = ""
                     else:
-                        ch_map["[[補助項目]]"] = ch.get("sub_title", "実行ステップ")
-                        ch_map["[[補助項目の本文]]"] = sanitize_text_empty_lines(ch.get("sub_body", ch.get("body", "")))
+                        ch_map["[[補助項目]]"] = ch.get("sub_title", "")
+                        ch_map["[[補助項目の本文]]"] = sanitize_text_empty_lines(ch.get("sub_body", ""))
 
                     notice_val = clean_notice_text(ch.get("notice", ""))
                     ch_map["[[補足文]]"] = notice_val
                     ch_map["[[注意文]]"] = notice_val
 
+                    # 1. STEP用タグ
                     step_descs = ch.get("step_descs", [])
                     if not step_descs or len(step_descs) < 4:
                         step_descs = [
@@ -1110,11 +1211,47 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                             "新プロモーションの実施",
                             "月商200万円の継続的維持"
                         ]
-
                     for idx_s in range(1, 5):
                         desc_s = step_descs[idx_s - 1] if len(step_descs) >= idx_s else ""
                         ch_map[f"[[STEP{idx_s}の説明]]"] = desc_s
 
+                    # 2. ★チェックリスト用タグ★
+                    c_intro = ch.get("checklist_intro", "各フェーズの完了条件および重要確認事項です。")
+                    c_outro = ch.get("checklist_outro", "上記全項目の確認完了後、責任者へご共有ください。")
+                    c_items = ch.get("checklist_items", [])
+                    if not c_items:
+                        c_items = [
+                            "顧客データの集計と整合性確認",
+                            "ターゲット層への提案骨子確定",
+                            "新プロモーション予算の決裁取得",
+                            "月次進捗レビュー体制の構築"
+                        ]
+                    ch_map["[[チェックリスト導入文]]"] = c_intro
+                    ch_map["[[チェック後の案内文]]"] = c_outro
+                    for k in range(1, 7):
+                        ch_map[f"[[チェック項目{k}]]"] = c_items[k - 1] if len(c_items) >= k else ""
+
+                    # 3. ★表組み（テーブル）用タグ★
+                    tbl_data = ch.get("table", {})
+                    headers = tbl_data.get("headers", ["施策項目", "担当部門", "完了期日", "状況"])
+                    rows = tbl_data.get("rows", [
+                        ["データ分析基盤の構築", "DX推進部", "11月15日", "順調"],
+                        ["ターゲット層へのアプローチ", "営業推進室", "11月30日", "着手済"],
+                        ["新プロモーション展開", "マーケティング部", "12月20日", "企画中"]
+                    ])
+                    ch_map["[[表の注記]]"] = tbl_data.get("note", ch.get("notice", ""))
+
+                    for c_idx in range(1, 5):
+                        h_val = headers[c_idx - 1] if len(headers) >= c_idx else ""
+                        ch_map[f"[[列見出し{c_idx}]]"] = h_val
+
+                    for r_idx in range(1, 4):
+                        row = rows[r_idx - 1] if len(rows) >= r_idx else []
+                        for c_idx in range(1, 5):
+                            cell_val = row[c_idx - 1] if len(row) >= c_idx else ""
+                            ch_map[f"[[行{r_idx}列{c_idx}]]"] = cell_val
+
+                    # 置換実行
                     process_slide_shapes(
                         ch_slide, ch_map,
                         chapter_num=ch_num_str, chapter_title=clean_ch_title,
@@ -1123,6 +1260,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         has_chart=should_draw_chart
                     )
 
+                    # グラフ描画
                     if should_draw_chart and chart_info:
                         categories = chart_info.get("categories", ["7月", "8月", "9月", "10月"])
                         series_name = str(chart_info.get("series_name", "売上高（万円）"))
