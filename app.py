@@ -281,6 +281,7 @@ def ensure_page_number(slide, page_num):
 # グラフフォント（メイリオ ＋ 赤テーマ色 ＋ タイトル反映）
 # ==========================================
 def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
+    ns_a = nsdecls("a")
     if chart.has_title and chart.chart_title.text_frame:
         for p in chart.chart_title.text_frame.paragraphs:
             p.font.name = "メイリオ"
@@ -288,13 +289,16 @@ def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
             for run in p.runs:
                 run.font.name = "メイリオ"
                 run.font.size = Pt(11)
-                rPr = run._r.get_or_add_rPr()
-                rPr.attrib['sz'] = '1100'
-                for child in list(rPr):
-                    if child.tag.endswith('ea') or child.tag.endswith('latin'):
-                        rPr.remove(child)
-                rPr.append(parse_xml(f'<a:ea {nsdecls("a")} typeface="メイリオ"/>'))
-                rPr.append(parse_xml(f'<a:latin {nsdecls("a")} typeface="Meiryo"/>'))
+                try:
+                    rPr = run._r.get_or_add_rPr()
+                    rPr.attrib['sz'] = '1100'
+                    for child in list(rPr):
+                        if child.tag.endswith('ea') or child.tag.endswith('latin'):
+                            rPr.remove(child)
+                    rPr.append(parse_xml('<a:ea ' + ns_a + ' typeface="メイリオ"/>'))
+                    rPr.append(parse_xml('<a:latin ' + ns_a + ' typeface="Meiryo"/>'))
+                except Exception:
+                    pass
 
     for axis in [getattr(chart, 'category_axis', None), getattr(chart, 'value_axis', None)]:
         if axis and hasattr(axis, 'tick_labels'):
@@ -310,8 +314,8 @@ def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
                     for child in list(defRPr):
                         if child.tag.endswith('ea') or child.tag.endswith('latin'):
                             defRPr.remove(child)
-                    defRPr.append(parse_xml(f'<a:ea {nsdecls("a")} typeface="メイリオ"/>'))
-                    defRPr.append(parse_xml(f'<a:latin {nsdecls("a")} typeface="Meiryo"/>'))
+                    defRPr.append(parse_xml('<a:ea ' + ns_a + ' typeface="メイリオ"/>'))
+                    defRPr.append(parse_xml('<a:latin ' + ns_a + ' typeface="Meiryo"/>'))
             except Exception:
                 pass
 
@@ -324,10 +328,10 @@ def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
                 pPr = p.get_or_add_pPr()
                 defRPr = pPr.get_or_add_defRPr()
                 defRPr.attrib['sz'] = str(font_size_pt * 100)
-                defRPr.append(parse_xml(f'<a:ea {nsdecls("a")} typeface="メイリオ"/>'))
-                defRPr.append(parse_xml(f'<a:latin {nsdecls("a")} typeface="Meiryo"/>'))
-            except Exception:
-                pass
+                defRPr.append(parse_xml('<a:ea ' + ns_a + ' typeface="メイリオ"/>'))
+                defRPr.append(parse_xml('<a:latin ' + ns_a + ' typeface="Meiryo"/>'))
+        except Exception:
+            pass
 
 # ==========================================
 # STEP 1〜4 完全固定構築 ＆ 余白拡大 ＆ アイコン上下左右完全中央揃え
@@ -452,7 +456,7 @@ def build_perfect_steps(slide, step_descs):
                         r.font.color.rgb = RGBColor(255, 255, 255)
 
 # ==========================================
-# ★P4 チェックリスト：本文とグレー四角の間隔拡大エンジン★
+# P4 チェックリスト：本文とグレー四角の間隔拡大エンジン
 # ==========================================
 def format_checklist_slide(slide):
     intro_shape = None
@@ -471,7 +475,6 @@ def format_checklist_slide(slide):
         elif "CHECKLIST_OUTRO" in sname:
             outro_shape = shp
 
-    # 本文とグレー四角の間をゆったり空ける（本文下端から約26pt）
     if intro_shape and box_shape:
         tf_intro = intro_shape.text_frame
         intro_txt = tf_intro.text.strip()
@@ -498,7 +501,7 @@ def format_checklist_slide(slide):
             outro_shape.top = int(box_shape.top + box_shape.height + Pt(14.0))
 
 # ==========================================
-# ★P5 表組み：文字量に応じた列幅自動配分 ＆ 注釈9pt被り解消エンジン★
+# P5 表組み：文字量に応じた列幅自動配分 ＆ 注釈9pt被り解消エンジン
 # ==========================================
 def adjust_table_column_widths_by_content(table, total_width_pt=671.1):
     num_cols = len(table.columns)
@@ -550,7 +553,6 @@ def format_table_and_note(slide, total_width_pt=671.1):
                         r.font.name = "メイリオ"
                         r.font.size = Pt(11.0)
 
-    # 注釈の文字サイズ縮小（9pt）＆ 被り解消（表下端+16ptへ退避）
     if tbl_shape and note_shape:
         if note_shape.has_text_frame:
             for p in note_shape.text_frame.paragraphs:
@@ -581,7 +583,6 @@ def align_all_headers_and_connectors(slide, has_sub_item=True, has_chart=False):
         elif "MAIN_BODY_TEXT" in sname:
             main_body = shp
 
-    # 1. 補助項目が不要な場合（グラフ・STEP・チェックリスト等）、不要な縦線コネクタを完全削除
     if not has_sub_item or has_chart:
         shapes_to_del = []
         for shp in slide.shapes:
@@ -595,7 +596,6 @@ def align_all_headers_and_connectors(slide, has_sub_item=True, has_chart=False):
             except Exception:
                 pass
 
-    # 2. 主要見出しの赤バー (SECTION_LINE) の位置を文字と完全同期 (left=113.7pt, width=4.0pt)
     for shp in slide.shapes:
         sname = shp.name.upper()
         if "SECTION_LINE" in sname or (sname == "SECTION_LINE"):
@@ -606,7 +606,6 @@ def align_all_headers_and_connectors(slide, has_sub_item=True, has_chart=False):
                 shp.top = int(main_title.top + Pt(5.5))
                 main_title.left = Pt(124.6)
 
-    # 3. グラフスライド (P2) の見出しと本文の文字被り解消
     if has_chart and main_title and main_body:
         main_title.width = Pt(220)
         t_text = main_title.text_frame.text.strip()
@@ -615,7 +614,6 @@ def align_all_headers_and_connectors(slide, has_sub_item=True, has_chart=False):
         main_body.top = int(main_title.top + title_h + Pt(12.0))
         main_body.width = Pt(220)
 
-    # 4. 補助項目タイトルの縦線とテキストの左座標を主要見出しとミリ単位完全一致（中心115.7pt, 文字124.6pt）
     if has_sub_item and not has_chart:
         for shp in slide.shapes:
             sname = shp.name.upper()
@@ -674,14 +672,12 @@ def format_chapter_title_paragraph(p, ch_num, ch_title):
 
     p.text = ""
     
-    # Run 0: 章番号（赤色）
     r0 = p.add_run()
     r0.text = f"{ch_num} "
     r0.font.color.rgb = RGBColor(217, 48, 37)
     if base_font_name: r0.font.name = base_font_name
     if base_font_size: r0.font.size = base_font_size
 
-    # Run 1: タイトル文字列（標準色）
     r1 = p.add_run()
     r1.text = clean_title
     if base_font_name: r1.font.name = base_font_name
@@ -1364,11 +1360,11 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         has_chart=should_draw_chart
                     )
 
-                    # ★P4 チェックリストの本文とグレー四角の余白調整★
+                    # P4 チェックリストの本文とグレー四角の余白調整
                     if layout_type == "checklist" or "確認" in clean_ch_title or "チェック" in clean_ch_title:
                         format_checklist_slide(ch_slide)
 
-                    # ★P5 表組みの文字量に応じた列幅自動配分 ＆ 注釈被り解消★
+                    # P5 表組みの文字量に応じた列幅自動配分 ＆ 注釈被り解消
                     if layout_type == "table" or "表" in clean_ch_title or "タスク" in clean_ch_title or "管理" in clean_ch_title or "プラン" in clean_ch_title or "料金" in clean_ch_title:
                         format_table_and_note(ch_slide)
 
