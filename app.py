@@ -124,7 +124,7 @@ def sanitize_main_item(main_item, clean_ch_title):
             elif "アクション" in clean_ch_title or "手順" in clean_ch_title:
                 main_item = "今後の4つの実行計画"
             elif "チェック" in clean_ch_title or "確認" in clean_ch_title:
-                main_item = "各業務の実行と承認確認"
+                main_item = "推進前の確認事項"
             elif "表" in clean_ch_title or "タスク" in clean_ch_title or "管理" in clean_ch_title:
                 main_item = "実行タスクの進捗一覧"
             else:
@@ -326,8 +326,8 @@ def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
                 defRPr.attrib['sz'] = str(font_size_pt * 100)
                 defRPr.append(parse_xml(f'<a:ea {nsdecls("a")} typeface="メイリオ"/>'))
                 defRPr.append(parse_xml(f'<a:latin {nsdecls("a")} typeface="Meiryo"/>'))
-        except Exception:
-            pass
+            except Exception:
+                pass
 
 # ==========================================
 # STEP 1〜4 完全固定構築 ＆ 余白拡大 ＆ アイコン上下左右完全中央揃え
@@ -450,6 +450,119 @@ def build_perfect_steps(slide, step_descs):
                         r.font.size = Pt(9.0)
                         r.font.bold = True
                         r.font.color.rgb = RGBColor(255, 255, 255)
+
+# ==========================================
+# ★P4 チェックリスト：本文とグレー四角の間隔拡大エンジン★
+# ==========================================
+def format_checklist_slide(slide):
+    intro_shape = None
+    box_shape = None
+    items_shape = None
+    outro_shape = None
+
+    for shp in slide.shapes:
+        sname = shp.name.upper()
+        if "CHECKLIST_INTRO" in sname:
+            intro_shape = shp
+        elif "長方形" in shp.name or "BOX" in sname or (shp.shape_type == 1 and shp.width > Pt(500) and shp.height > Pt(100)):
+            box_shape = shp
+        elif "CHECKLIST_ITEMS" in sname or (shp.has_text_frame and "□" in shp.text_frame.text):
+            items_shape = shp
+        elif "CHECKLIST_OUTRO" in sname:
+            outro_shape = shp
+
+    # 本文とグレー四角の間をゆったり空ける（本文下端から約26pt）
+    if intro_shape and box_shape:
+        tf_intro = intro_shape.text_frame
+        intro_txt = tf_intro.text.strip()
+        lines = intro_txt.count('\n') + len(intro_txt) // 35 + 1
+        intro_h = max(Pt(19.4), Pt(lines * 18))
+
+        new_box_top = int(intro_shape.top + intro_h + Pt(26.0))
+        delta_y = new_box_top - box_shape.top
+        box_shape.top = new_box_top
+
+        if items_shape:
+            items_shape.top = int(items_shape.top + delta_y)
+            if items_shape.has_text_frame:
+                for p in items_shape.text_frame.paragraphs:
+                    p.font.name = "メイリオ"
+                    p.font.size = Pt(13.0)
+                    p.line_spacing = 1.3
+                    p.space_after = Pt(8.0)
+                    for r in p.runs:
+                        r.font.name = "メイリオ"
+                        r.font.size = Pt(13.0)
+
+        if outro_shape:
+            outro_shape.top = int(box_shape.top + box_shape.height + Pt(14.0))
+
+# ==========================================
+# ★P5 表組み：文字量に応じた列幅自動配分 ＆ 注釈9pt被り解消エンジン★
+# ==========================================
+def adjust_table_column_widths_by_content(table, total_width_pt=671.1):
+    num_cols = len(table.columns)
+    if num_cols == 0:
+        return
+
+    col_scores = []
+    for c in range(num_cols):
+        max_score = 4
+        for row in table.rows:
+            cell_text = row.cells[c].text_frame.text.strip()
+            score = 0
+            for ch in cell_text:
+                score += 2 if ord(ch) > 127 else 1
+            if score > max_score:
+                max_score = score
+        col_scores.append(max_score)
+
+    total_score = sum(col_scores)
+    min_col_width = 75.0
+    rem_width = total_width_pt - (min_col_width * num_cols)
+
+    allocated_widths = []
+    for score in col_scores:
+        w = min_col_width + (rem_width * (score / total_score))
+        allocated_widths.append(w)
+
+    for c in range(num_cols):
+        table.columns[c].width = int(Pt(allocated_widths[c]))
+
+def format_table_and_note(slide, total_width_pt=671.1):
+    tbl_shape = None
+    note_shape = None
+
+    for shp in slide.shapes:
+        if shp.has_table:
+            tbl_shape = shp
+        elif shp.has_text_frame and ("※" in shp.text_frame.text or "注" in shp.text_frame.text or "BODY_TEXT" in shp.name.upper()):
+            note_shape = shp
+
+    if tbl_shape:
+        adjust_table_column_widths_by_content(tbl_shape.table, total_width_pt)
+        for row in tbl_shape.table.rows:
+            for cell in row.cells:
+                for p in cell.text_frame.paragraphs:
+                    p.font.name = "メイリオ"
+                    p.font.size = Pt(11.0)
+                    for r in p.runs:
+                        r.font.name = "メイリオ"
+                        r.font.size = Pt(11.0)
+
+    # 注釈の文字サイズ縮小（9pt）＆ 被り解消（表下端+16ptへ退避）
+    if tbl_shape and note_shape:
+        if note_shape.has_text_frame:
+            for p in note_shape.text_frame.paragraphs:
+                p.font.name = "メイリオ"
+                p.font.size = Pt(9.0)
+                p.font.color.rgb = RGBColor(120, 120, 120)
+                for r in p.runs:
+                    r.font.name = "メイリオ"
+                    r.font.size = Pt(9.0)
+                    r.font.color.rgb = RGBColor(120, 120, 120)
+
+        note_shape.top = int(tbl_shape.top + tbl_shape.height + Pt(16.0))
 
 # ==========================================
 # 要素位置・整列エンジン（P2被り解消・P3左ラインミリ単位完全一致・不要線削除）
@@ -613,7 +726,7 @@ def process_paragraph_runs(p, replace_map, chapter_num=None, chapter_title=None,
             auto_fit_font_size_and_spacing(p, p.text, min_size_pt=9.5)
 
 # ==========================================
-# スライド要素置換処理（チェックリスト・表組み完全対応）
+# スライド要素置換処理
 # ==========================================
 def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=None, assigned_files=None, captions=None, is_cover=False, step_descs=None, has_chart=False):
     shapes_to_remove = []
@@ -715,7 +828,6 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
 
             tf.word_wrap = True
             for p in tf.paragraphs:
-                # ★チェック項目の空行消去ロジック（不要な□を段落ごと消去）★
                 if "[[チェック項目" in p.text:
                     for k in range(1, 7):
                         tag_k = f"[[チェック項目{k}]]"
@@ -724,17 +836,11 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
 
                 process_paragraph_runs(p, replace_map, chapter_num, chapter_title, is_cover=is_cover)
 
-        # ★表組み（テーブル）の各セル置換 ＆ メイリオ11pt適用★
         if shape.has_table:
             for row in shape.table.rows:
                 for cell in row.cells:
                     for p in cell.text_frame.paragraphs:
                         process_paragraph_runs(p, replace_map, is_cover=is_cover)
-                        p.font.name = "メイリオ"
-                        p.font.size = Pt(11.0)
-                        for r in p.runs:
-                            r.font.name = "メイリオ"
-                            r.font.size = Pt(11.0)
 
     for shp in shapes_to_remove:
         try:
@@ -968,14 +1074,14 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
             # 2. チェックリスト詳細フォーム
             if e_layout == "checklist" or "確認" in e_title or "チェック" in e_title:
                 st.markdown("**✅ チェックリスト設定（最大6項目）**")
-                c_intro_val = st.text_input("チェックリスト導入文", value=ch.get("checklist_intro", "各フェーズの完了条件および重要確認事項です。"), key=f"c_intro_{idx}")
+                c_intro_val = st.text_input("チェックリスト導入文", value=ch.get("checklist_intro", "施策実行における重要確認事項です。"), key=f"c_intro_{idx}")
                 
                 c_items_def = ch.get("checklist_items", [])
                 if not c_items_def:
                     c_items_def = [
-                        "顧客データの集計と整合性確認",
-                        "ターゲット層への提案骨子確定",
-                        "新プロモーション予算の決裁取得",
+                        "顧客購買データのクレンジングと抽出完了",
+                        "高単価ターゲット層のセグメント確定",
+                        "プロモーション施策のKPIおよび予算決裁",
                         "月次進捗レビュー体制の構築"
                     ]
                 e_c_items = []
@@ -987,7 +1093,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         if val_item.strip():
                             e_c_items.append(val_item.strip())
                 
-                c_outro_val = st.text_input("確認後の案内文", value=ch.get("checklist_outro", "上記全項目の確認完了後、責任者へご共有ください。"), key=f"c_outro_{idx}")
+                c_outro_val = st.text_input("確認後の案内文", value=ch.get("checklist_outro", "全項目の確認完了後、各担当部門にて施策を進行してください。"), key=f"c_outro_{idx}")
             else:
                 c_intro_val = ch.get("checklist_intro", "")
                 e_c_items = ch.get("checklist_items", [])
@@ -997,10 +1103,10 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
             if e_layout == "table" or "表" in e_title or "管理" in e_title or "プラン" in e_title:
                 st.markdown("**📋 表組み（テーブル）データ設定**")
                 tbl_raw = ch.get("table", {})
-                h_list = tbl_raw.get("headers", ["施策項目", "担当部門", "完了期日", "状況"])
+                h_list = tbl_raw.get("headers", ["施策項目", "担当部門", "完了期日", "進捗状況"])
                 r_list = tbl_raw.get("rows", [
                     ["データ分析基盤の構築", "DX推進部", "11月15日", "順調"],
-                    ["ターゲット層へのアプローチ", "営業推進室", "11月30日", "着手済"],
+                    ["ターゲット層への提案骨子確定", "営業推進室", "11月30日", "着手済"],
                     ["新プロモーション展開", "マーケティング部", "12月20日", "企画中"]
                 ])
                 
@@ -1159,7 +1265,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         (is_chart_keyword and ch_idx == 0)
                     )
 
-                    # ★テンプレートインデックス判定★
                     target_template_idx = 2
                     if layout_type == "checklist" or "確認" in clean_ch_title or "チェック" in clean_ch_title:
                         target_template_idx = 9 if tpl_slide_count > 9 else 2
@@ -1186,12 +1291,11 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
 
                     main_item_text = sanitize_main_item(ch.get("main_item", ""), clean_ch_title)
 
-                    # ★置換マップの完全生成★
                     ch_map = {}
                     ch_map["[[主要項目]]"] = main_item_text
                     ch_map["[[本文]]"] = sanitize_text_empty_lines(ch.get("body", ""))
 
-                    if should_draw_chart:
+                    if should_draw_chart or layout_type in ["checklist", "table"]:
                         ch_map["[[補助項目]]"] = ""
                         ch_map["[[補助項目の本文]]"] = ""
                     else:
@@ -1215,15 +1319,15 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         desc_s = step_descs[idx_s - 1] if len(step_descs) >= idx_s else ""
                         ch_map[f"[[STEP{idx_s}の説明]]"] = desc_s
 
-                    # 2. ★チェックリスト用タグ★
-                    c_intro = ch.get("checklist_intro", "各フェーズの完了条件および重要確認事項です。")
-                    c_outro = ch.get("checklist_outro", "上記全項目の確認完了後、責任者へご共有ください。")
+                    # 2. チェックリスト用タグ
+                    c_intro = ch.get("checklist_intro", "施策実行における重要確認事項です。")
+                    c_outro = ch.get("checklist_outro", "全項目の確認完了後、各担当部門にて施策を進行してください。")
                     c_items = ch.get("checklist_items", [])
                     if not c_items:
                         c_items = [
-                            "顧客データの集計と整合性確認",
-                            "ターゲット層への提案骨子確定",
-                            "新プロモーション予算の決裁取得",
+                            "顧客購買データのクレンジングと抽出完了",
+                            "高単価ターゲット層のセグメント確定",
+                            "プロモーション施策のKPIおよび予算決裁",
                             "月次進捗レビュー体制の構築"
                         ]
                     ch_map["[[チェックリスト導入文]]"] = c_intro
@@ -1231,12 +1335,12 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     for k in range(1, 7):
                         ch_map[f"[[チェック項目{k}]]"] = c_items[k - 1] if len(c_items) >= k else ""
 
-                    # 3. ★表組み（テーブル）用タグ★
+                    # 3. 表組み（テーブル）用タグ
                     tbl_data = ch.get("table", {})
-                    headers = tbl_data.get("headers", ["施策項目", "担当部門", "完了期日", "状況"])
+                    headers = tbl_data.get("headers", ["施策項目", "担当部門", "完了期日", "進捗状況"])
                     rows = tbl_data.get("rows", [
                         ["データ分析基盤の構築", "DX推進部", "11月15日", "順調"],
-                        ["ターゲット層へのアプローチ", "営業推進室", "11月30日", "着手済"],
+                        ["ターゲット層への提案骨子確定", "営業推進室", "11月30日", "着手済"],
                         ["新プロモーション展開", "マーケティング部", "12月20日", "企画中"]
                     ])
                     ch_map["[[表の注記]]"] = tbl_data.get("note", ch.get("notice", ""))
@@ -1259,6 +1363,14 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         step_descs=step_descs if layout_type == "step" or "アクション" in clean_ch_title or "手順" in clean_ch_title else None,
                         has_chart=should_draw_chart
                     )
+
+                    # ★P4 チェックリストの本文とグレー四角の余白調整★
+                    if layout_type == "checklist" or "確認" in clean_ch_title or "チェック" in clean_ch_title:
+                        format_checklist_slide(ch_slide)
+
+                    # ★P5 表組みの文字量に応じた列幅自動配分 ＆ 注釈被り解消★
+                    if layout_type == "table" or "表" in clean_ch_title or "タスク" in clean_ch_title or "管理" in clean_ch_title or "プラン" in clean_ch_title or "料金" in clean_ch_title:
+                        format_table_and_note(ch_slide)
 
                     # グラフ描画
                     if should_draw_chart and chart_info:
