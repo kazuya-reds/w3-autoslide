@@ -1460,4 +1460,60 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
 
                                 chart.has_title = True
                                 g_title_text = str(chart_info.get("title", f"{clean_ch_title}"))
-                                chart.chart_title.text_frame.text = g_title
+                                chart.chart_title.text_frame.text = g_title_text
+
+                                for s in chart.series:
+                                    s.format.line.color.rgb = RGBColor(217, 48, 37)
+                                    s.format.line.width = Pt(2.5)
+                                    if hasattr(s, 'format') and hasattr(s.format, 'fill'):
+                                        try:
+                                            s.format.fill.solid()
+                                            s.format.fill.fore_color.rgb = RGBColor(217, 48, 37)
+                                        except Exception:
+                                            pass
+                                    try:
+                                        if hasattr(s, 'marker'):
+                                            s.marker.format.fill.solid()
+                                            s.marker.format.fill.fore_color.rgb = RGBColor(217, 48, 37)
+                                            s.marker.format.line.color.rgb = RGBColor(217, 48, 37)
+                                    except Exception:
+                                        pass
+
+                                force_meiryo_and_style_on_chart(chart, font_size_pt=9)
+                                chart_created = True
+                            except Exception:
+                                pass
+
+                # 4. 元のテンプレートスライド消去
+                for i in range(tpl_slide_count - 1, -1, -1):
+                    del prs.slides._sldIdLst[i]
+
+                # 5. 残存未置換タグ消去 ＆ ページ番号付与
+                for s_i, sld in enumerate(prs.slides):
+                    for shp in sld.shapes:
+                        if shp.has_text_frame:
+                            for p in shp.text_frame.paragraphs:
+                                if "[[" in p.text and "]]" in p.text:
+                                    p.text = re.sub(r'\[\[.*?\]\]', '', p.text)
+                    if s_i > 0:
+                        ensure_page_number(sld, s_i)
+
+                # 6. 保存
+                safe_filename = re.sub(r'[\\/:*?"<>|]', '_', doc_title.strip())
+                if not safe_filename:
+                    safe_filename = "提案書"
+                output_path = f"{safe_filename}.pptx"
+
+                prs.save(output_path)
+
+                st.balloons()
+                st.success(f"🎉 『{safe_filename}.pptx』の自動構築が完了しました！")
+                with open(output_path, "rb") as f:
+                    st.download_button(
+                        label=f"📥 『{safe_filename}.pptx』をダウンロード",
+                        data=f,
+                        file_name=output_path,
+                        mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                    )
+            except Exception as e:
+                st.error(f"エラーが発生しました: {e}")
