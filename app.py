@@ -638,10 +638,10 @@ def align_all_headers_and_connectors(slide, has_sub_item=True, has_chart=False):
             if "コネクタ" in shp.name or "LINE" in sname:
                 if "SECTION_LINE" not in sname:
                     if sub_title:
-                        shp.left = Pt(113.7) # 赤バーの左端と完全に同軸一致
-                        shp.top = int(sub_title.top + Pt(6.5)) # 文字の上端・下端の間にジャストフィット
-                        shp.height = Pt(13.0) # 文字サイズ(13.5pt)にピッタリ一致
-                        sub_title.left = Pt(124.6) # 主要見出しの文字開始位置と完全一致
+                        shp.left = Pt(113.7)
+                        shp.top = int(sub_title.top + Pt(6.5))
+                        shp.height = Pt(13.0)
+                        sub_title.left = Pt(124.6)
 
 def adjust_shapes_for_chart(slide):
     align_all_headers_and_connectors(slide, has_sub_item=False, has_chart=True)
@@ -666,7 +666,6 @@ def format_and_align_index_slide(slide):
             elif f"INDEX_{k}_PAGE" in sname:
                 page_shapes[k] = shp
 
-    # 最長タイトルの右端を正確に算出（18ptメイリオ基準）
     max_title_right = Pt(460.0)
 
     for k in range(1, 7):
@@ -677,7 +676,6 @@ def format_and_align_index_slide(slide):
                 t_shp.text_frame.word_wrap = False
                 t_shp.width = Pt(340.0)
 
-                # 番号（01, 02...）を赤色太字、タイトルを通常色太字で再構成
                 p = t_shp.text_frame.paragraphs[0]
                 m = re.match(r'^(\d{2})\s*(.*)$', txt)
                 if m:
@@ -705,7 +703,6 @@ def format_and_align_index_slide(slide):
                 if calc_right > max_title_right:
                     max_title_right = calc_right
 
-    # ページ番号（P2〜P7）を左揃え（同一X座標）で縦一直線に整列
     page_left_pos = max(Pt(550.0), int(max_title_right + Pt(25.0)))
 
     for k in range(1, 7):
@@ -1138,7 +1135,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         "顧客購買データのクレンジングと抽出完了",
                         "高単価ターゲット層のセグメント確定",
                         "プロモーション施策のKPIおよび予算決裁",
-                        "月次売上進捗レビュー体制の構築"
+                        "月次進捗レビュー体制の構築"
                     ]
                 e_c_items = []
                 ci_cols = st.columns(2)
@@ -1386,7 +1383,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                             "顧客購買データのクレンジングと抽出完了",
                             "高単価ターゲット層のセグメント確定",
                             "プロモーション施策のKPIおよび予算決裁",
-                            "月次売上進捗レビュー体制の構築"
+                            "月次進捗レビュー体制の構築"
                         ]
                     ch_map["[[チェックリスト導入文]]"] = c_intro
                     ch_map["[[チェック後の案内文]]"] = c_outro
@@ -1463,60 +1460,4 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
 
                                 chart.has_title = True
                                 g_title_text = str(chart_info.get("title", f"{clean_ch_title}"))
-                                chart.chart_title.text_frame.text = g_title_text
-
-                                for s in chart.series:
-                                    s.format.line.color.rgb = RGBColor(217, 48, 37)
-                                    s.format.line.width = Pt(2.5)
-                                    if hasattr(s, 'format') and hasattr(s.format, 'fill'):
-                                        try:
-                                            s.format.fill.solid()
-                                            s.format.fill.fore_color.rgb = RGBColor(217, 48, 37)
-                                        except Exception:
-                                            pass
-                                    try:
-                                        if hasattr(s, 'marker'):
-                                            s.marker.format.fill.solid()
-                                            s.marker.format.fill.fore_color.rgb = RGBColor(217, 48, 37)
-                                            s.marker.format.line.color.rgb = RGBColor(217, 48, 37)
-                                    except Exception:
-                                        pass
-
-                                force_meiryo_and_style_on_chart(chart, font_size_pt=9)
-                                chart_created = True
-                            except Exception:
-                                pass
-
-                # 4. 元のテンプレートスライド消去
-                for i in range(tpl_slide_count - 1, -1, -1):
-                    del prs.slides._sldIdLst[i]
-
-                # 5. 残存未置換タグ消去 ＆ ページ番号付与
-                for s_i, sld in enumerate(prs.slides):
-                    for shp in sld.shapes:
-                        if shp.has_text_frame:
-                            for p in shp.text_frame.paragraphs:
-                                if "[[" in p.text and "]]" in p.text:
-                                    p.text = re.sub(r'\[\[.*?\]\]', '', p.text)
-                    if s_i > 0:
-                        ensure_page_number(sld, s_i)
-
-                # 6. 保存
-                safe_filename = re.sub(r'[\\/:*?"<>|]', '_', doc_title.strip())
-                if not safe_filename:
-                    safe_filename = "提案書"
-                output_path = f"{safe_filename}.pptx"
-
-                prs.save(output_path)
-
-                st.balloons()
-                st.success(f"🎉 『{safe_filename}.pptx』の自動構築が完了しました！")
-                with open(output_path, "rb") as f:
-                    st.download_button(
-                        label=f"📥 『{safe_filename}.pptx』をダウンロード",
-                        data=f,
-                        file_name=output_path,
-                        mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                    )
-            except Exception as e:
-                st.error(f"エラーが発生しました: {e}")
+                                chart.chart_title.text_frame.text = g_title
