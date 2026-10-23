@@ -456,7 +456,7 @@ def build_perfect_steps(slide, step_descs):
                         r.font.color.rgb = RGBColor(255, 255, 255)
 
 # ==========================================
-# P4 チェックリスト：本文とグレー四角の間隔拡大エンジン
+# ★P6 チェックリスト：背景グレー四角に対する「縦の中央揃え」エンジン★
 # ==========================================
 def format_checklist_slide(slide):
     intro_shape = None
@@ -482,20 +482,42 @@ def format_checklist_slide(slide):
         intro_h = max(Pt(19.4), Pt(lines * 18))
 
         new_box_top = int(intro_shape.top + intro_h + Pt(26.0))
-        delta_y = new_box_top - box_shape.top
         box_shape.top = new_box_top
 
-        if items_shape:
-            items_shape.top = int(items_shape.top + delta_y)
-            if items_shape.has_text_frame:
-                for p in items_shape.text_frame.paragraphs:
-                    p.font.name = "メイリオ"
-                    p.font.size = Pt(13.0)
-                    p.line_spacing = 1.3
-                    p.space_after = Pt(8.0)
-                    for r in p.runs:
-                        r.font.name = "メイリオ"
-                        r.font.size = Pt(13.0)
+        if items_shape and items_shape.has_text_frame:
+            tf = items_shape.text_frame
+            
+            # 空のパラグラフを完全消去
+            valid_paras = [p for p in tf.paragraphs if p.text.strip()]
+            num_items = max(1, len(valid_paras))
+            
+            p_elements = list(tf._txBody.p_lst)
+            for p_elem in p_elements:
+                txt = "".join(p_elem.itertext()).strip()
+                if not txt and len(tf._txBody.p_lst) > num_items:
+                    tf._txBody.remove(p_elem)
+
+            for p in tf.paragraphs:
+                p.font.name = "メイリオ"
+                p.font.size = Pt(13.0)
+                p.line_spacing = 1.3
+                p.space_after = Pt(10.0)
+                for r in p.runs:
+                    r.font.name = "メイリオ"
+                    r.font.size = Pt(13.0)
+
+            # 有効なアイテム数から実効高さを割り出し、背景グレー四角の上下真ん中に配置
+            effective_items_h = Pt(num_items * 27.0)
+            items_shape.height = int(effective_items_h)
+            items_shape.top = int(box_shape.top + (box_shape.height - effective_items_h) / 2)
+
+            tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+            tf.margin_top = Pt(0)
+            tf.margin_bottom = Pt(0)
+            try:
+                tf._txBody.bodyPr.attrib['anchor'] = 'ctr'
+            except Exception:
+                pass
 
         if outro_shape:
             outro_shape.top = int(box_shape.top + box_shape.height + Pt(14.0))
@@ -567,7 +589,7 @@ def format_table_and_note(slide, total_width_pt=671.1):
         note_shape.top = int(tbl_shape.top + tbl_shape.height + Pt(16.0))
 
 # ==========================================
-# 要素位置・整列エンジン（P2被り解消・P3左ラインミリ単位完全一致・不要線削除）
+# ★P2・P3 要素位置・整列エンジン（主要見出し・補助項目縦線のミリ単位完全整列）★
 # ==========================================
 def align_all_headers_and_connectors(slide, has_sub_item=True, has_chart=False):
     main_title = None
@@ -596,6 +618,7 @@ def align_all_headers_and_connectors(slide, has_sub_item=True, has_chart=False):
             except Exception:
                 pass
 
+    # 1. 主要見出しの赤バー (SECTION_LINE): 中心X=115.7pt, Y座標を文字行高中央に完全一致
     for shp in slide.shapes:
         sname = shp.name.upper()
         if "SECTION_LINE" in sname or (sname == "SECTION_LINE"):
@@ -603,7 +626,7 @@ def align_all_headers_and_connectors(slide, has_sub_item=True, has_chart=False):
             shp.width = Pt(4.0)
             shp.height = Pt(19.3)
             if main_title:
-                shp.top = int(main_title.top + Pt(5.5))
+                shp.top = int(main_title.top + Pt(4.8))
                 main_title.left = Pt(124.6)
 
     if has_chart and main_title and main_body:
@@ -614,6 +637,7 @@ def align_all_headers_and_connectors(slide, has_sub_item=True, has_chart=False):
         main_body.top = int(main_title.top + title_h + Pt(12.0))
         main_body.width = Pt(220)
 
+    # 2. 補助項目タイトル横の縦線: 中心X=115.7pt (同軸一致), Y座標も文字上下中央に完全一致
     if has_sub_item and not has_chart:
         for shp in slide.shapes:
             sname = shp.name.upper()
@@ -621,8 +645,8 @@ def align_all_headers_and_connectors(slide, has_sub_item=True, has_chart=False):
                 if "SECTION_LINE" not in sname:
                     if sub_title:
                         shp.left = Pt(115.7)
-                        shp.top = int(sub_title.top + Pt(4.0))
-                        shp.height = Pt(16.0)
+                        shp.top = int(sub_title.top + Pt(5.2))
+                        shp.height = Pt(14.0)
                         sub_title.left = Pt(124.6)
 
 def adjust_shapes_for_chart(slide):
@@ -634,8 +658,44 @@ def adjust_shapes_for_chart(slide):
             shape.width = Pt(220)
 
 # ==========================================
-# INDEX目次スライドの各章タイトルの数字赤色化
+# ★P1 INDEX目次スライド：改行防止 ＆ タイトル長さに応じたページ番号の動的間隔配置★
 # ==========================================
+def adjust_index_slide_layout(slide):
+    title_shapes = {}
+    page_shapes = {}
+
+    for shp in slide.shapes:
+        sname = shp.name.upper()
+        for k in range(1, 7):
+            if f"INDEX_{k}_TITLE" in sname:
+                title_shapes[k] = shp
+            elif f"INDEX_{k}_PAGE" in sname:
+                page_shapes[k] = shp
+
+    for k in range(1, 7):
+        if k in title_shapes and k in page_shapes:
+            t_shp = title_shapes[k]
+            p_shp = page_shapes[k]
+
+            if t_shp.has_text_frame and t_shp.text_frame.text.strip():
+                txt = t_shp.text_frame.text.strip()
+                t_shp.text_frame.word_wrap = False
+                
+                # 文字幅を算出（13ptメイリオ: 全角約13.5pt, 半角約7.5pt）
+                char_width = 0
+                for c in txt:
+                    char_width += 13.5 if ord(c) > 127 else 7.5
+                
+                t_shp.width = int(Pt(char_width + 12.0))
+                
+                # ページ番号（P2等）をタイトルのすぐ右（間隔約16pt）に動的配置
+                p_shp.left = int(t_shp.left + t_shp.width + Pt(16.0))
+                p_shp.width = Pt(60.0)
+                if p_shp.has_text_frame:
+                    p_shp.text_frame.word_wrap = False
+                    for p in p_shp.text_frame.paragraphs:
+                        p.alignment = PP_ALIGN.LEFT
+
 def format_index_title_paragraph(p, text):
     p.text = ""
     match = re.match(r'^(\d{2})\s*(.*)$', str(text).strip())
@@ -1235,6 +1295,8 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     index_map[f"[[章{k}ページ]]"] = ""
 
                 process_slide_shapes(index_slide, index_map)
+                # ★目次のタイトル長さに応じてページ番号位置を自動追従調整★
+                adjust_index_slide_layout(index_slide)
                 new_created_slides.append(index_slide)
 
                 chart_created = False
@@ -1360,11 +1422,11 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         has_chart=should_draw_chart
                     )
 
-                    # P4 チェックリストの本文とグレー四角の余白調整
+                    # ★P6 チェックリストの縦の中央揃え＆余白調整★
                     if layout_type == "checklist" or "確認" in clean_ch_title or "チェック" in clean_ch_title:
                         format_checklist_slide(ch_slide)
 
-                    # P5 表組みの文字量に応じた列幅自動配分 ＆ 注釈被り解消
+                    # ★P5 表組みの文字量に応じた列幅自動配分 ＆ 注釈被り解消★
                     if layout_type == "table" or "表" in clean_ch_title or "タスク" in clean_ch_title or "管理" in clean_ch_title or "プラン" in clean_ch_title or "料金" in clean_ch_title:
                         format_table_and_note(ch_slide)
 
