@@ -638,10 +638,10 @@ def align_all_headers_and_connectors(slide, has_sub_item=True, has_chart=False):
             if "コネクタ" in shp.name or "LINE" in sname:
                 if "SECTION_LINE" not in sname:
                     if sub_title:
-                        shp.left = Pt(113.7) # 赤バーの左端と完全に同軸一致
-                        shp.top = int(sub_title.top + Pt(6.5)) # 文字の上端・下端の間にジャストフィット
-                        shp.height = Pt(13.0) # 文字サイズ(13.5pt)にピッタリ一致
-                        sub_title.left = Pt(124.6) # 主要見出しの文字開始位置と完全一致
+                        shp.left = Pt(113.7)
+                        shp.top = int(sub_title.top + Pt(6.5))
+                        shp.height = Pt(13.0)
+                        sub_title.left = Pt(124.6)
 
 def adjust_shapes_for_chart(slide):
     align_all_headers_and_connectors(slide, has_sub_item=False, has_chart=True)
@@ -837,6 +837,7 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
                 shapes_to_remove.append(shape)
                 continue
 
+        # 画像タグ（[[画像1]], [[画像2]]）の実際の画像差し替え処理
         if shape.has_text_frame and ("[[画像1]]" in shape.text_frame.text or "[[画像2]]" in shape.text_frame.text):
             tf_text = shape.text_frame.text
             target_idx = 0 if "[[画像1]]" in tf_text else 1
@@ -928,11 +929,11 @@ with col2:
 
 image_contexts = []
 if uploaded_files:
-    st.write("📷 画像の用途・説明")
+    st.write("📷 アップロードした画像の説明（AIが自動で配置を推測します）")
     c_cols = st.columns(min(len(uploaded_files), 3))
     for i, f in enumerate(uploaded_files):
         with c_cols[i % 3]:
-            desc = st.text_input(f"画像{i+1}（{f.name}）の説明", placeholder="例：サービス活用イメージ図")
+            desc = st.text_input(f"画像{i+1}（{f.name}）の説明", placeholder="例：システム概要図、施策イメージ", key=f"img_ctx_{i}")
             image_contexts.append({"index": i, "filename": f.name, "description": desc})
 
 raw_memo = st.text_area("資料の内容メモ", 
@@ -1019,6 +1020,9 @@ with col_btn1:
                        - 赤帯に配置する15文字以内の短いキャッチコピー（見出し）を指定してください。
                     6. "chart_info" について:
                        - 売上や推移データがある場合は "chart_info" を必ず格納してください。
+                    7. ★画像割り当て ("assigned_image_indices") について:
+                       - アップロード画像（image_contexts）が存在する場合、その説明やファイル名に最も適した章の "assigned_image_indices" にインデックス番号（例: [0] や [1]）を割り当ててください。
+                       - 画像の簡単なキャプション（説明）を "image_captions" に指定してください。
 
                     【出力形式】
                     純粋なJSONのみを出力してください。
@@ -1026,12 +1030,14 @@ with col_btn1:
                       "chapters": [
                         {{
                           "chapter_title": "章タイトル",
-                          "layout_type": "line_chart", 
+                          "layout_type": "text", 
                           "main_item": "主要見出し（15文字以内）",
                           "body": "本文テキスト",
                           "sub_title": "補助項目タイトル",
                           "sub_body": "補助項目本文",
                           "notice": "",
+                          "assigned_image_indices": [0],
+                          "image_captions": ["画像の説明文"],
                           "step_descs": ["ステップ1", "ステップ2", "ステップ3", "ステップ4"],
                           "checklist_intro": "確認事項の導入文",
                           "checklist_items": ["項目1", "項目2", "項目3", "項目4"],
@@ -1062,7 +1068,7 @@ with col_btn1:
 
                     st.session_state["parsed_data"] = final_data
                     st.session_state["analyzed"] = True
-                    st.success("✅ AIの構成解析が完了しました！下部の編集フォームでテキストや数値を微調整できます。")
+                    st.success("✅ AIの構成解析が完了しました！下部の編集フォームでテキストや挿入画像を微調整できます。")
                 except Exception as e:
                     err_msg = str(e)
                     if "503" in err_msg or "UNAVAILABLE" in err_msg:
@@ -1077,7 +1083,7 @@ with col_btn1:
 # ==========================================
 if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state:
     st.subheader("✏️ AI解析結果のプレビュー ＆ WEB編集フォーム")
-    st.caption("各スライドの内容を自由に変更できます。調整が終わったら最下部の生成ボタンを押してください。")
+    st.caption("各スライドの内容を自由に変更できます。画像の挿入先もここで確認・変更できます。")
 
     parsed_chapters = st.session_state["parsed_data"].get("chapters", [])
     edited_chapters = []
@@ -1102,6 +1108,32 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 
                 e_sub_title = st.text_input(f"補助項目 タイトル", value=ch.get("sub_title", ""), key=f"sub_t_{idx}")
                 e_sub_body = st.text_area(f"補助項目 本文", value=sanitize_text_empty_lines(ch.get("sub_body", "")), height=68, key=f"sub_b_{idx}")
+
+            # ★ 画像挿入の手動選択UI ★
+            e_assigned_indices = []
+            e_captions = []
+            if uploaded_files:
+                st.markdown("**📷 画像の挿入設定**")
+                img_options = ["（挿入しない）"] + [f"画像{i+1}: {f.name}" for i, f in enumerate(uploaded_files)]
+                
+                # AIが自動で割り当てたインデックスを初期選択にする
+                ai_assigned = ch.get("assigned_image_indices", [])
+                default_sel_idx = 0
+                if ai_assigned and len(ai_assigned) > 0 and ai_assigned[0] < len(uploaded_files):
+                    default_sel_idx = ai_assigned[0] + 1
+                
+                sel_img = st.selectbox("このスライドに挿入する画像", img_options, index=default_sel_idx, key=f"img_sel_{idx}")
+                if sel_img != "（挿入しない）":
+                    chosen_idx = img_options.index(sel_img) - 1
+                    e_assigned_indices = [chosen_idx]
+                    
+                    old_caps = ch.get("image_captions", [])
+                    default_cap = old_caps[0] if old_caps else ""
+                    user_cap = st.text_input("画像のキャプション（任意）", value=default_cap, key=f"cap_{idx}")
+                    e_captions = [user_cap]
+            else:
+                e_assigned_indices = ch.get("assigned_image_indices", [])
+                e_captions = ch.get("image_captions", [])
 
             # 1. STEP詳細フォーム
             if e_layout == "step":
@@ -1225,8 +1257,8 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 "checklist_items": e_c_items,
                 "checklist_outro": c_outro_val,
                 "table": e_table,
-                "assigned_image_indices": ch.get("assigned_image_indices", []),
-                "image_captions": ch.get("image_captions", []),
+                "assigned_image_indices": e_assigned_indices,
+                "image_captions": e_captions,
                 "chart_info": edited_c_info
             })
 
@@ -1292,11 +1324,21 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     index_map[f"[[章{k}ページ]]"] = ""
 
                 process_slide_shapes(index_slide, index_map)
-                # ★P1 目次：番号赤色化 ＆ ページ番号左揃え整列★
                 format_and_align_index_slide(index_slide)
                 new_created_slides.append(index_slide)
 
                 chart_created = False
+
+                # ★ 画像未割り当て時の自動フォールバック処理 ★
+                # 画像がアップロードされているのにどこにも指定されていない場合、最初の通常テキストスライドに自動配置
+                if uploaded_files:
+                    total_assigned_imgs = sum(len(ch.get("assigned_image_indices", [])) for ch in edited_chapters)
+                    if total_assigned_imgs == 0:
+                        for ch in edited_chapters:
+                            ltype = ch.get("layout_type", "text")
+                            if ltype == "text":
+                                ch["assigned_image_indices"] = [0]
+                                break
 
                 # 3. 各章スライド構築
                 for ch_idx, ch in enumerate(edited_chapters):
@@ -1334,6 +1376,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         elif tpl_slide_count > 6: target_template_idx = 6
                         else: target_template_idx = 2
                     else:
+                        # 画像ありスライドのテンプレート切り替え
                         if img_count >= 2 and tpl_slide_count > 3: target_template_idx = 3
                         elif img_count == 1 and tpl_slide_count > 4: target_template_idx = 4
                         else: target_template_idx = 2
@@ -1350,7 +1393,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     ch_map["[[主要項目]]"] = main_item_text
                     ch_map["[[本文]]"] = sanitize_text_empty_lines(ch.get("body", ""))
 
-                    if should_draw_chart or layout_type in ["checklist", "table"]:
+                    if should_draw_chart or layout_type in ["checklist", "table"] or img_count > 0:
                         ch_map["[[補助項目]]"] = ""
                         ch_map["[[補助項目の本文]]"] = ""
                     else:
