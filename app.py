@@ -64,6 +64,7 @@ LAYOUT_MAP = {
     "line_chart": "折れ線グラフ（推移・トレンド）",
     "bar_chart": "棒グラフ（比較・実績）",
     "text": "標準テキスト（文章・概要）",
+    "image": "画像付き解説（画像メイン）",
     "step": "実行ステップ（フロー・手順）",
     "checklist": "チェックリスト（確認項目）",
     "table": "表組み（料金・仕様・管理一覧）"
@@ -127,7 +128,7 @@ def sanitize_main_item(main_item, clean_ch_title):
                 main_item = "売上高は堅調に拡大"
             elif "要因" in clean_ch_title or "分析" in clean_ch_title:
                 main_item = "増収要因と一時的影響"
-            elif "アクション" in clean_ch_title or "手順" in clean_ch_title or "戦略" in clean_ch_title:
+            elif "アクション" in clean_ch_title or "手順" in clean_ch_title:
                 main_item = "今後の4つの実行計画"
             elif "チェック" in clean_ch_title or "確認" in clean_ch_title:
                 main_item = "推進前の確認事項"
@@ -295,12 +296,33 @@ def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
             for run in p.runs:
                 run.font.name = "メイリオ"
                 run.font.size = Pt(11)
+                try:
+                    rPr = run._r.get_or_add_rPr()
+                    rPr.attrib['sz'] = '1100'
+                    for child in list(rPr):
+                        if child.tag.endswith('ea') or child.tag.endswith('latin'):
+                            rPr.remove(child)
+                    rPr.append(parse_xml('<a:ea ' + ns_a + ' typeface="メイリオ"/>'))
+                    rPr.append(parse_xml('<a:latin ' + ns_a + ' typeface="Meiryo"/>'))
+                except Exception:
+                    pass
 
     for axis in [getattr(chart, 'category_axis', None), getattr(chart, 'value_axis', None)]:
         if axis and hasattr(axis, 'tick_labels'):
             try:
                 axis.tick_labels.font.name = "メイリオ"
                 axis.tick_labels.font.size = Pt(font_size_pt)
+                txPr = axis.tick_labels._element.get_or_add_txPr()
+                for p in txPr.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}p'):
+                    pPr = p.get_or_add_pPr()
+                    defRPr = pPr.get_or_add_defRPr()
+                    defRPr.attrib['sz'] = str(font_size_pt * 100)
+                    defRPr.attrib['typeface'] = 'メイリオ'
+                    for child in list(defRPr):
+                        if child.tag.endswith('ea') or child.tag.endswith('latin'):
+                            defRPr.remove(child)
+                    defRPr.append(parse_xml('<a:ea ' + ns_a + ' typeface="メイリオ"/>'))
+                    defRPr.append(parse_xml('<a:latin ' + ns_a + ' typeface="Meiryo"/>'))
             except Exception:
                 pass
 
@@ -308,6 +330,13 @@ def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
         try:
             chart.legend.font.name = "メイリオ"
             chart.legend.font.size = Pt(font_size_pt)
+            txPr = chart.legend._element.get_or_add_txPr()
+            for p in txPr.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}p'):
+                pPr = p.get_or_add_pPr()
+                defRPr = pPr.get_or_add_defRPr()
+                defRPr.attrib['sz'] = str(font_size_pt * 100)
+                defRPr.append(parse_xml('<a:ea ' + ns_a + ' typeface="メイリオ"/>'))
+                defRPr.append(parse_xml('<a:latin ' + ns_a + ' typeface="Meiryo"/>'))
         except Exception:
             pass
 
@@ -674,6 +703,33 @@ def insert_slide_images_guaranteed(slide, assigned_images, captions=None):
             p.font.name = "メイリオ"
             p.font.color.rgb = RGBColor(120, 120, 120)
 
+    elif img_count >= 2:
+        for r_i in range(min(2, img_count)):
+            img_bytes = assigned_images[r_i]["bytes"]
+            pil_img = Image.open(io.BytesIO(img_bytes))
+            orig_w, orig_h = pil_img.size
+
+            max_w = Pt(175)
+            max_h = Pt(280)
+            scale = min(max_w / orig_w, max_h / orig_h)
+            new_w = int(orig_w * scale)
+            new_h = int(orig_h * scale)
+            new_l = int(Pt(385 + r_i * 190) + (max_w - new_w) / 2)
+            new_t = int(Pt(140) + (max_h - new_h) / 2)
+
+            slide.shapes.add_picture(io.BytesIO(img_bytes), new_l, new_t, new_w, new_h)
+
+            if captions and len(captions) > r_i and captions[r_i]:
+                tx_box = slide.shapes.add_textbox(new_l, new_t + new_h + Pt(6), new_w, Pt(22))
+                tf = tx_box.text_frame
+                tf.word_wrap = True
+                p = tf.paragraphs[0]
+                p.text = captions[r_i]
+                p.alignment = PP_ALIGN.CENTER
+                p.font.size = Pt(9.0)
+                p.font.name = "メイリオ"
+                p.font.color.rgb = RGBColor(120, 120, 120)
+
 # ==========================================
 # INDEX目次スライド
 # ==========================================
@@ -1019,6 +1075,8 @@ with col_btn1:
                        - 赤帯に配置する15文字以内の短いキャッチコピー（見出し）を指定してください。
                     6. "chart_info" について:
                        - 売上や推移データがある場合は "chart_info" を必ず格納してください。
+                    7. ★画像割り当て ("assigned_image_indices") について:
+                       - アップロード画像がある場合、適切な章のスライドに画像インデックス番号（[0] または [1]）を割り当ててください。
 
                     【出力形式】
                     純粋なJSONのみを出力してください。
@@ -1026,12 +1084,14 @@ with col_btn1:
                       "chapters": [
                         {{
                           "chapter_title": "章タイトル",
-                          "layout_type": "line_chart", 
+                          "layout_type": "text", 
                           "main_item": "主要見出し（15文字以内）",
                           "body": "本文テキスト",
                           "sub_title": "補助項目タイトル",
                           "sub_body": "補助項目本文",
                           "notice": "",
+                          "assigned_image_indices": [0],
+                          "image_captions": ["画像の説明文"],
                           "step_descs": ["ステップ1", "ステップ2", "ステップ3", "ステップ4"],
                           "checklist_intro": "確認事項の導入文",
                           "checklist_items": ["項目1", "項目2", "項目3", "項目4"],
@@ -1103,18 +1163,33 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 e_sub_title = st.text_input(f"補助項目 タイトル", value=ch.get("sub_title", ""), key=f"sub_t_{idx}")
                 e_sub_body = st.text_area(f"補助項目 本文", value=sanitize_text_empty_lines(ch.get("sub_body", "")), height=68, key=f"sub_b_{idx}")
 
-            # ★ 通常テキストスライドの場合のみ画像挿入設定を表示 ★
+            # ★ すべてのレイアウトで画像の挿入選択を可能にする ★
             e_assigned_indices = []
             e_captions = []
-            if e_layout == "text" and active_images:
+            if active_images:
                 st.markdown("**📷 画像の挿入設定（任意）**")
                 img_options = ["（挿入しない）"] + [f"画像{i+1}: {img['filename']}" for i, img in enumerate(active_images)]
-                sel_img = st.selectbox("このスライドに挿入する画像", img_options, index=0, key=f"img_sel_{idx}")
+                
+                ai_assigned = ch.get("assigned_image_indices", [])
+                default_sel_idx = 0
+                if ai_assigned and len(ai_assigned) > 0 and ai_assigned[0] < len(active_images):
+                    default_sel_idx = ai_assigned[0] + 1
+                elif idx == 1 and len(active_images) > 0:
+                    default_sel_idx = 1
+                
+                sel_img = st.selectbox("このスライドに挿入する画像", img_options, index=default_sel_idx, key=f"img_sel_{idx}")
                 if sel_img != "（挿入しない）":
                     chosen_idx = img_options.index(sel_img) - 1
                     e_assigned_indices = [chosen_idx]
-                    user_cap = st.text_input("画像のキャプション（任意）", value="", key=f"cap_{idx}")
+                    
+                    old_caps = ch.get("image_captions", [])
+                    default_cap = old_caps[0] if (old_caps and isinstance(old_caps, list) and len(old_caps) > 0) else ""
+                    user_cap = st.text_input("画像のキャプション（任意）", value=default_cap, key=f"cap_{idx}")
                     e_captions = [user_cap]
+                    st.success(f"✅ このスライドの右側に 『{active_images[chosen_idx]['filename']}』 を挿入します")
+            else:
+                e_assigned_indices = ch.get("assigned_image_indices", [])
+                e_captions = ch.get("image_captions", [])
 
             # 1. STEP詳細フォーム
             if e_layout == "step":
@@ -1284,9 +1359,13 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                             raise FileNotFoundError(f"テンプレートファイルが見つかりません。")
 
                 prs = Presentation(template_path)
+                
+                # ★ テンプレートの元のスライド枚数を正確に保持 ★
                 tpl_slide_count = len(prs.slides)
+                file_name_only = os.path.basename(template_path)
 
                 today_str = datetime.date.today().strftime("%Y/%m/%d")
+                new_created_slides = []
 
                 # 1. 表紙スライド
                 cover_slide = duplicate_slide_safe(prs, 0)
@@ -1297,6 +1376,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     "[[更新日]]": today_str
                 }
                 process_slide_shapes(cover_slide, cover_map, is_cover=True)
+                new_created_slides.append(cover_slide)
 
                 # 2. INDEX（目次）スライド
                 index_slide = duplicate_slide_safe(prs, 1)
@@ -1318,8 +1398,17 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
 
                 process_slide_shapes(index_slide, index_map)
                 format_and_align_index_slide(index_slide)
+                new_created_slides.append(index_slide)
 
                 chart_created = False
+
+                if active_images and len(active_images) > 0:
+                    assigned_count = sum(len(ch.get("assigned_image_indices", [])) for ch in edited_chapters)
+                    if assigned_count == 0:
+                        target_ch = edited_chapters[1] if len(edited_chapters) > 1 else edited_chapters[0]
+                        target_ch["assigned_image_indices"] = [0]
+
+                inserted_image_report = []
 
                 # 3. 各章スライド構築
                 for ch_idx, ch in enumerate(edited_chapters):
@@ -1336,14 +1425,15 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     chart_info = ch.get("chart_info")
                     is_chart_keyword = any(kw in clean_ch_title for kw in ["推移", "売上", "実績", "比較", "グラフ", "データ"])
 
-                    # ★ グラフスライドの厳密判定 ★
                     should_draw_chart = (not chart_created) and (
                         "line" in layout_type or "bar" in layout_type or "chart" in layout_type or
                         (is_chart_keyword and ch_idx == 0)
                     )
 
-                    # ★ レイアウトに応じたテンプレートの確実な選定 ★
-                    if layout_type == "checklist" or "確認" in clean_ch_title or "チェック" in clean_ch_title:
+                    # ★ テンプレート選定ロジック ★
+                    if should_draw_chart:
+                        target_template_idx = 2
+                    elif layout_type == "checklist" or "確認" in clean_ch_title or "チェック" in clean_ch_title:
                         target_template_idx = 9 if tpl_slide_count > 9 else 2
                     elif layout_type == "step" or "フロー" in clean_ch_title or "流れ" in clean_ch_title or "手順" in clean_ch_title or "アクション" in clean_ch_title or "戦略" in clean_ch_title:
                         target_template_idx = 5 if tpl_slide_count > 5 else 2
@@ -1362,19 +1452,17 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         target_template_idx = 2
 
                     ch_slide = duplicate_slide_safe(prs, target_template_idx)
+                    new_created_slides.append(ch_slide)
 
                     main_item_text = sanitize_main_item(ch.get("main_item", ""), clean_ch_title)
 
                     ch_map = {}
                     ch_map["[[主要項目]]"] = main_item_text
+                    
+                    # ★ スライド1で要因（補助項目）が抜けないよう、グラフ時もサブ本文を保持 ★
                     ch_map["[[本文]]"] = sanitize_text_empty_lines(ch.get("body", ""))
-
-                    if should_draw_chart or layout_type in ["checklist", "table", "step"] or len(assigned_imgs) > 0:
-                        ch_map["[[補助項目]]"] = ""
-                        ch_map["[[補助項目の本文]]"] = ""
-                    else:
-                        ch_map["[[補助項目]]"] = ch.get("sub_title", "")
-                        ch_map["[[補助項目の本文]]"] = sanitize_text_empty_lines(ch.get("sub_body", ""))
+                    ch_map["[[補助項目]]"] = ch.get("sub_title", "")
+                    ch_map["[[補助項目の本文]]"] = sanitize_text_empty_lines(ch.get("sub_body", ""))
 
                     notice_val = clean_notice_text(ch.get("notice", ""))
                     ch_map["[[補足文]]"] = notice_val
@@ -1429,33 +1517,57 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                             cell_val = row[c_idx - 1] if (isinstance(row, list) and len(row) >= c_idx) else ""
                             ch_map[f"[[行{r_idx}列{c_idx}]]"] = cell_val
 
-                    # 置換実行
+                    # ★ 置換実行 ★
                     process_slide_shapes(
                         ch_slide, ch_map,
                         chapter_num=ch_num_str, chapter_title=clean_ch_title,
                         is_cover=False,
-                        step_descs=step_descs if (layout_type == "step" or "アクション" in clean_ch_title or "手順" in clean_ch_title or "戦略" in clean_ch_title) else None,
+                        step_descs=step_descs if target_template_idx == 5 else None,
                         has_chart=should_draw_chart
                     )
 
+                    # ★ 不用なグレー四角の完全消去（スライド3,4,5の問題解消） ★
+                    shapes_to_delete = []
+                    for shp in ch_slide.shapes:
+                        # もし「文字の入っていないグレーの長方形（またはそれに準ずる図形）」があれば削除
+                        if shp.shape_type == 1 and not shp.has_text_frame: 
+                            # チェックリストの背景枠（幅500以上など巨大なもの）は消さない
+                            if shp.width < Pt(500):
+                                shapes_to_delete.append(shp)
+                        elif shp.has_text_frame:
+                            txt = shp.text_frame.text.strip()
+                            if txt == "" and shp.shape_type == 1:
+                                if shp.width < Pt(500):
+                                    shapes_to_delete.append(shp)
+                            elif "[[画像" in txt or "[[キャプション" in txt:
+                                shapes_to_delete.append(shp)
+
+                    for shp in shapes_to_delete:
+                        try:
+                            sp = shp._element
+                            sp.getparent().remove(sp)
+                        except Exception:
+                            pass
+
                     # P6 チェックリスト整形
-                    if layout_type == "checklist" or "確認" in clean_ch_title or "チェック" in clean_ch_title:
+                    if target_template_idx == 9:
                         format_checklist_slide(ch_slide)
 
                     # P5 表組み整形
-                    if layout_type == "table" or "表" in clean_ch_title or "タスク" in clean_ch_title or "管理" in clean_ch_title or "プラン" in clean_ch_title or "料金" in clean_ch_title:
+                    if target_template_idx in [6, 7, 8]:
                         format_table_and_note(ch_slide)
 
-                    # ★ 通常テキストスライドの場合のみ画像挿入 ★
-                    if layout_type == "text" and len(assigned_imgs) > 0 and not should_draw_chart:
+                    # ★ 画像挿入処理（通常スライドの右側に100%配置） ★
+                    if len(assigned_imgs) > 0 and not should_draw_chart and target_template_idx == 2:
                         insert_slide_images_guaranteed(ch_slide, assigned_imgs, captions)
+                        for af in assigned_imgs:
+                            inserted_image_report.append(f"スライド {ch_page_num}（{clean_ch_title}）: 『{af['filename']}』")
 
-                    # ★ グラフ描画（スライド1またはグラフ指定スライド） ★
-                    if should_draw_chart:
-                        c_dict = chart_info if isinstance(chart_info, dict) else extract_chart_data_from_memo(raw_memo)
-                        categories = c_dict.get("categories", ["7月", "8月", "9月", "10月"])
-                        series_name = str(c_dict.get("series_name", "売上高（万円）"))
-                        raw_values = c_dict.get("values", [100.0, 150.0, 130.0, 200.0])
+                    # ★ グラフ描画（スライド1等） ★
+                    if should_draw_chart and chart_info and isinstance(chart_info, dict):
+                        categories = chart_info.get("categories", ["7月", "8月", "9月", "10月"])
+                        series_name = str(chart_info.get("series_name", "売上高（万円）"))
+                        raw_values = chart_info.get("values", [100.0, 150.0, 130.0, 200.0])
 
                         values = []
                         if isinstance(raw_values, list):
@@ -1484,12 +1596,42 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                                 chart = chart_shape.chart
 
                                 chart.has_title = True
-                                g_title_text = str(c_dict.get("title", f"{clean_ch_title}"))
+                                g_title_text = str(chart_info.get("title", f"{clean_ch_title}"))
                                 chart.chart_title.text_frame.text = g_title_text
+                                
+                                # ★ タイトルのフォントをメイリオに設定 ★
+                                ns_a = nsdecls("a")
+                                for p in chart.chart_title.text_frame.paragraphs:
+                                    p.font.name = "メイリオ"
+                                    p.font.size = Pt(12)
+                                    for r in p.runs:
+                                        r.font.name = "メイリオ"
+                                        r.font.size = Pt(12)
+                                        try:
+                                            rPr = r._r.get_or_add_rPr()
+                                            rPr.attrib['sz'] = '1200'
+                                            for child in list(rPr):
+                                                if child.tag.endswith('ea') or child.tag.endswith('latin'):
+                                                    rPr.remove(child)
+                                            rPr.append(parse_xml('<a:ea ' + ns_a + ' typeface="メイリオ"/>'))
+                                            rPr.append(parse_xml('<a:latin ' + ns_a + ' typeface="Meiryo"/>'))
+                                        except Exception:
+                                            pass
 
+                                # ★ グラフの線と青い点（マーカー）を全て赤色に統一 ★
                                 for s in chart.series:
+                                    # 折れ線自体を赤に
                                     s.format.line.color.rgb = RGBColor(217, 48, 37)
                                     s.format.line.width = Pt(2.5)
+                                    
+                                    # マーカー（青い点）を赤に
+                                    try:
+                                        if hasattr(s, 'marker'):
+                                            s.marker.format.fill.solid()
+                                            s.marker.format.fill.fore_color.rgb = RGBColor(217, 48, 37)
+                                            s.marker.format.line.color.rgb = RGBColor(217, 48, 37)
+                                    except Exception:
+                                        pass
 
                                 force_meiryo_and_style_on_chart(chart, font_size_pt=9)
                                 chart_created = True
@@ -1497,6 +1639,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                                 pass
 
                 # ★【最重要】元のテンプレートスライド（先頭の12枚）を完全に消去する★
+                # 上から順番に消すとインデックスがズレるので、必ずリストを作成してから消去する
                 slide_ids_to_remove = [prs.slides._sldIdLst[i] for i in range(tpl_slide_count)]
                 for sld_id in slide_ids_to_remove:
                     prs.slides._sldIdLst.remove(sld_id)
@@ -1521,6 +1664,14 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
 
                 st.balloons()
                 st.success(f"🎉 『{safe_filename}.pptx』の自動構築が完了しました！（全 {len(prs.slides)} ページ）")
+                
+                # 画像の挿入結果を画面に明記
+                if inserted_image_report:
+                    st.info("📷 **以下のスライドに画像を配置しました：**\n- " + "\n- ".join(inserted_image_report))
+                elif active_images:
+                    st.warning("⚠️ 画像データは保持されていましたが、挿入可能なスライドがありませんでした。")
+                else:
+                    st.info("ℹ️ 画像はアップロードされていません。")
 
                 with open(output_path, "rb") as f:
                     st.download_button(
