@@ -1551,4 +1551,143 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         elif shp.has_text_frame:
                             txt = shp.text_frame.text.strip()
                             if txt == "" and shp.shape_type == 1 and Pt(50) < shp.width < Pt(500):
-                                shapes_to_delete.
+                                shapes_to_delete.append(shp)
+                            elif "[[画像" in txt or "[[キャプション" in txt:
+                                shapes_to_delete.append(shp)
+
+                    for shp in shapes_to_delete:
+                        try:
+                            sp = shp._element
+                            sp.getparent().remove(sp)
+                        except Exception:
+                            pass
+
+                    # P6 チェックリスト整形
+                    if target_template_idx == 9:
+                        format_checklist_slide(ch_slide)
+
+                    # P5 表組み整形
+                    if target_template_idx in [6, 7, 8]:
+                        format_table_and_note(ch_slide)
+
+                    # ★ 画像挿入処理（グラフ以外の全スライドで右側に確実に配置） ★
+                    if len(assigned_imgs) > 0 and not should_draw_chart:
+                        insert_slide_images_guaranteed(ch_slide, assigned_imgs, captions)
+                        for af in assigned_imgs:
+                            inserted_image_report.append(f"スライド {ch_page_num}（{clean_ch_title}）: 『{af['filename']}』")
+
+                    # ★ グラフ描画（スライド1等） ★
+                    if should_draw_chart and chart_info and isinstance(chart_info, dict):
+                        categories = chart_info.get("categories", ["7月", "8月", "9月", "10月"])
+                        series_name = str(chart_info.get("series_name", "売上高（万円）"))
+                        raw_values = chart_info.get("values", [100.0, 150.0, 130.0, 200.0])
+
+                        values = []
+                        if isinstance(raw_values, list):
+                            for v in raw_values:
+                                try:
+                                    num_str = re.sub(r'[^\d\.]', '', str(v))
+                                    values.append(float(num_str) if num_str else 0.0)
+                                except Exception:
+                                    values.append(0.0)
+
+                        if categories and values:
+                            min_len = min(len(categories), len(values))
+                            categories = categories[:min_len]
+                            values = values[:min_len]
+
+                            chart_data = CategoryChartData()
+                            chart_data.categories = categories
+                            chart_data.add_series(series_name, values)
+
+                            adjust_shapes_for_chart(ch_slide)
+
+                            try:
+                                c_type = XL_CHART_TYPE.COLUMN_CLUSTERED if ("bar" in layout_type or "棒" in clean_ch_title) else XL_CHART_TYPE.LINE_MARKERS
+                                x_pos, y_pos, cx_pos, cy_pos = Pt(380), Pt(135), Pt(290), Pt(260)
+                                chart_shape = ch_slide.shapes.add_chart(c_type, x_pos, y_pos, cx_pos, cy_pos, chart_data)
+                                chart = chart_shape.chart
+
+                                chart.has_title = True
+                                g_title_text = str(chart_info.get("title", f"{clean_ch_title}"))
+                                chart.chart_title.text_frame.text = g_title_text
+                                
+                                # ★ タイトルのフォントをメイリオに設定 ★
+                                ns_a = nsdecls("a")
+                                for p in chart.chart_title.text_frame.paragraphs:
+                                    p.font.name = "メイリオ"
+                                    p.font.size = Pt(12)
+                                    for r in p.runs:
+                                        r.font.name = "メイリオ"
+                                        r.font.size = Pt(12)
+                                        try:
+                                            rPr = r._r.get_or_add_rPr()
+                                            rPr.attrib['sz'] = '1200'
+                                            for child in list(rPr):
+                                                if child.tag.endswith('ea') or child.tag.endswith('latin'):
+                                                    rPr.remove(child)
+                                            rPr.append(parse_xml('<a:ea ' + ns_a + ' typeface="メイリオ"/>'))
+                                            rPr.append(parse_xml('<a:latin ' + ns_a + ' typeface="Meiryo"/>'))
+                                        except Exception:
+                                            pass
+
+                                # ★ グラフの線と青い点（マーカー）を全て赤色に統一 ★
+                                for s in chart.series:
+                                    s.format.line.color.rgb = RGBColor(217, 48, 37)
+                                    s.format.line.width = Pt(2.5)
+                                    try:
+                                        if hasattr(s, 'marker'):
+                                            s.marker.format.fill.solid()
+                                            s.marker.format.fill.fore_color.rgb = RGBColor(217, 48, 37)
+                                            s.marker.format.line.color.rgb = RGBColor(217, 48, 37)
+                                    except Exception:
+                                        pass
+
+                                force_meiryo_and_style_on_chart(chart, font_size_pt=9)
+                                chart_created = True
+                            except Exception:
+                                pass
+
+                # ★【最重要】元のテンプレートスライド（先頭の12枚）を完全に消去する★
+                slide_ids_to_remove = [prs.slides._sldIdLst[i] for i in range(tpl_slide_count)]
+                for sld_id in slide_ids_to_remove:
+                    prs.slides._sldIdLst.remove(sld_id)
+
+                # 5. 残存未置換タグ消去 ＆ ページ番号付与（表紙0, 目次1, 各章2〜）
+                for s_i, sld in enumerate(prs.slides):
+                    for shp in sld.shapes:
+                        if shp.has_text_frame:
+                            for p in shp.text_frame.paragraphs:
+                                if "[[" in p.text and "]]" in p.text:
+                                    p.text = re.sub(r'\[\[.*?\]\]', '', p.text)
+                    if s_i > 0:
+                        ensure_page_number(sld, s_i)
+
+                # 6. 保存
+                safe_filename = re.sub(r'[\\/:*?"<>|]', '_', doc_title.strip())
+                if not safe_filename:
+                    safe_filename = "提案書"
+                output_path = f"{safe_filename}.pptx"
+
+                prs.save(output_path)
+
+                st.balloons()
+                st.success(f"🎉 『{safe_filename}.pptx』の自動構築が完了しました！（全 {len(prs.slides)} ページ）")
+                
+                # 画像の挿入結果を画面に明記
+                if inserted_image_report:
+                    st.info("📷 **以下のスライドに画像を配置しました：**\n- " + "\n- ".join(inserted_image_report))
+                elif active_images:
+                    st.warning("⚠️ 画像データは保持されていましたが、挿入可能なスライドがありませんでした。")
+                else:
+                    st.info("ℹ️ 画像はアップロードされていません。")
+
+                with open(output_path, "rb") as f:
+                    st.download_button(
+                        label=f"📥 『{safe_filename}.pptx』をダウンロード",
+                        data=f,
+                        file_name=output_path,
+                        mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                    )
+            except Exception as e:
+                st.error(f"エラーが発生しました: {e}")
