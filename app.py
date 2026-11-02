@@ -652,11 +652,10 @@ def adjust_shapes_for_chart(slide):
             shape.width = Pt(220)
 
 # ==========================================
-# ★確実画像配置エンジン（枠があっても無くても100%確実に右側に自動挿入）★
+# ★確実画像配置エンジン（100%確実に右側に自動挿入・レイアウト調整）★
 # ==========================================
 def insert_slide_images_guaranteed(slide, assigned_files, captions=None):
     if not assigned_files or len(assigned_files) == 0:
-        # 画像なしの場合、残存するダミー枠を消去
         for shp in list(slide.shapes):
             if shp.has_text_frame and any(t in shp.text_frame.text for t in ["[[画像1]]", "[[画像2]]", "[[キャプション1]]", "[[キャプション2]]"]):
                 try:
@@ -711,7 +710,6 @@ def insert_slide_images_guaranteed(slide, assigned_files, captions=None):
                     except Exception:
                         pass
 
-    # ダミーテキスト枠を消去
     for idx, box in placeholder_shapes.items():
         try:
             sp = box._element
@@ -719,14 +717,13 @@ def insert_slide_images_guaranteed(slide, assigned_files, captions=None):
         except Exception:
             pass
 
-    # 3. ★枠が見つからなかった場合：スライド右側にアスペクト比維持で確実に自動配置★
+    # 3. 枠が見つからなかった場合：スライド右側にアスペクト比維持で確実に自動配置
     remaining_files = [f for i, f in enumerate(assigned_files) if i not in used_indices]
     if remaining_files:
-        # 左側の本文テキスト枠が画像を被らないよう幅をスライド左半分（260pt）に調整
         for shp in slide.shapes:
             if shp.has_text_frame and shp.left < Pt(350) and shp.top > Pt(80):
-                if shp.width > Pt(280):
-                    shp.width = Pt(260)
+                if shp.width > Pt(260):
+                    shp.width = Pt(240)
 
         img_count = len(remaining_files)
         if img_count == 1:
@@ -745,7 +742,6 @@ def insert_slide_images_guaranteed(slide, assigned_files, captions=None):
 
             slide.shapes.add_picture(io.BytesIO(img_bytes), new_l, new_t, new_w, new_h)
 
-            # キャプションの追加
             if captions and len(captions) > 0 and captions[0]:
                 tx_box = slide.shapes.add_textbox(new_l, new_t + new_h + Pt(6), new_w, Pt(22))
                 tf = tx_box.text_frame
@@ -1021,11 +1017,11 @@ with col2:
 
 image_contexts = []
 if uploaded_files:
-    st.write("📷 アップロードした画像の説明（AIが自動で配置を推測します）")
+    st.info(f"📷 {len(uploaded_files)}枚の画像がアップロードされています。スライドへ自動挿入されます。")
     c_cols = st.columns(min(len(uploaded_files), 3))
     for i, f in enumerate(uploaded_files):
         with c_cols[i % 3]:
-            desc = st.text_input(f"画像{i+1}（{f.name}）の説明", placeholder="例：システム概要図、施策イメージ", key=f"img_ctx_{i}")
+            desc = st.text_input(f"画像{i+1}（{f.name}）の説明（任意）", placeholder="例：企画イメージ、システム図", key=f"img_ctx_{i}")
             image_contexts.append({"index": i, "filename": f.name, "description": desc})
 
 raw_memo = st.text_area("資料の内容メモ", 
@@ -1113,7 +1109,7 @@ with col_btn1:
                     6. "chart_info" について:
                        - 売上や推移データがある場合は "chart_info" を必ず格納してください。
                     7. ★画像割り当て ("assigned_image_indices") について:
-                       - アップロード画像がある場合、最もふさわしい章にインデックス番号 [0] や [1] を割り当ててください。
+                       - アップロード画像がある場合、必ず関連する章のスライドに画像番号（[0] または [1]）を割り当ててください。
 
                     【出力形式】
                     純粋なJSONのみを出力してください。
@@ -1180,7 +1176,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
     edited_chapters = []
 
     for idx, ch in enumerate(parsed_chapters):
-        with st.expander(f"📄 スライド {idx + 1}: {ch.get('chapter_title', '')}", expanded=(idx == 0)):
+        with st.expander(f"📄 スライド {idx + 1}: {ch.get('chapter_title', '')}", expanded=(idx <= 1)):
             ec_cols1, ec_cols2 = st.columns([2, 1])
             
             with ec_cols1:
@@ -1211,7 +1207,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 default_sel_idx = 0
                 if ai_assigned and len(ai_assigned) > 0 and ai_assigned[0] < len(uploaded_files):
                     default_sel_idx = ai_assigned[0] + 1
-                elif idx == 1 and len(uploaded_files) > 0:  # 2枚目スライドを自動優先
+                elif idx == 1 and len(uploaded_files) > 0:
                     default_sel_idx = 1
                 
                 sel_img = st.selectbox("このスライドに挿入する画像", img_options, index=default_sel_idx, key=f"img_sel_{idx}")
@@ -1421,16 +1417,23 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
 
                 chart_created = False
 
-                # ★ 画像未割り当て時の自動フォールバック処理 ★
-                # 画像がアップロードされているのにどこにも指定されていない場合、最初の通常テキストスライドに自動配置
-                if uploaded_files:
-                    total_assigned_imgs = sum(len(ch.get("assigned_image_indices", [])) for ch in edited_chapters)
-                    if total_assigned_imgs == 0:
-                        for ch in edited_chapters:
-                            ltype = ch.get("layout_type", "text")
-                            if ltype == "text":
-                                ch["assigned_image_indices"] = [0]
-                                break
+                # ★【最重要】画像がアップロードされている場合の確実強制割り当て処理★
+                if uploaded_files and len(uploaded_files) > 0:
+                    all_assigned = set()
+                    for ch in edited_chapters:
+                        for idx_val in ch.get("assigned_image_indices", []):
+                            all_assigned.add(idx_val)
+
+                    unassigned = [i for i in range(len(uploaded_files)) if i not in all_assigned]
+                    if unassigned:
+                        for ch_candidate in edited_chapters:
+                            ltype = str(ch_candidate.get("layout_type", "")).lower()
+                            if not any(k in ltype for k in ["chart", "line", "bar"]):
+                                ch_candidate.setdefault("assigned_image_indices", []).append(unassigned.pop(0))
+                                if not unassigned:
+                                    break
+                        if unassigned and len(edited_chapters) > 0:
+                            edited_chapters[0].setdefault("assigned_image_indices", []).extend(unassigned)
 
                 # 3. 各章スライド構築
                 for ch_idx, ch in enumerate(edited_chapters):
@@ -1468,8 +1471,8 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         elif tpl_slide_count > 6: target_template_idx = 6
                         else: target_template_idx = 2
                     else:
-                        if img_count >= 2 and tpl_slide_count > 3: target_template_idx = 3
-                        elif img_count == 1 and tpl_slide_count > 4: target_template_idx = 4
+                        if len(assigned_files) >= 2 and tpl_slide_count > 3: target_template_idx = 3
+                        elif len(assigned_files) == 1 and tpl_slide_count > 4: target_template_idx = 4
                         else: target_template_idx = 2
 
                     if target_template_idx >= tpl_slide_count:
