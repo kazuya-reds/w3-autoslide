@@ -53,13 +53,6 @@ st.markdown("""
         border: 1px solid #e9ecef;
         margin-bottom: 15px;
     }
-    .img-box {
-        border: 2px dashed #ff4b4b;
-        padding: 10px;
-        border-radius: 8px;
-        background-color: #fff5f5;
-        margin-bottom: 15px;
-    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -81,8 +74,8 @@ LAYOUT_REVERSE_MAP = {v: k for k, v in LAYOUT_MAP.items()}
 # ==========================================
 # セッション状態の安全な初期化
 # ==========================================
-if "stored_images" not in st.session_state:
-    st.session_state["stored_images"] = []
+if "saved_images" not in st.session_state:
+    st.session_state["saved_images"] = []
 
 # ==========================================
 # API呼び出し用リトライエンジン
@@ -964,7 +957,7 @@ with st.sidebar:
     if st.button("🔄 データを初期化して最初から行う"):
         st.session_state.pop("parsed_data", None)
         st.session_state.pop("analyzed", None)
-        st.session_state.pop("stored_images", None)
+        st.session_state.pop("saved_images", None)
         st.rerun()
 
 col1, col2 = st.columns(2)
@@ -977,29 +970,31 @@ with col2:
         "挿入画像（任意・複数可）", 
         type=["png", "jpg", "jpeg"], 
         accept_multiple_files=True,
-        key="ppt_img_uploader_input"
+        key="main_file_uploader_key"
     )
 
-# ★【最重要】アップロードされた画像を直ちに session_state に永続保存★
+# アップロード画像をセッションに保存
 if uploaded_files:
-    st.session_state["stored_images"] = [
+    st.session_state["saved_images"] = [
         {"filename": f.name, "bytes": f.getvalue()} for f in uploaded_files
     ]
 
-# セッションに保存された画像データを取得
-active_images = st.session_state.get("stored_images", [])
+# 保持画像の取り出し
+active_images = []
+if uploaded_files:
+    active_images = [{"filename": f.name, "bytes": f.getvalue()} for f in uploaded_files]
+elif "saved_images" in st.session_state and st.session_state["saved_images"]:
+    active_images = st.session_state["saved_images"]
 
 image_contexts = []
 if active_images:
-    st.markdown('<div class="img-box">', unsafe_allow_html=True)
-    st.markdown(f"**📷 システムに保持されている画像（合計 {len(active_images)} 枚）**")
+    st.success(f"📷 合計 {len(active_images)} 枚の画像が読み込まれました。")
     img_preview_cols = st.columns(min(len(active_images), 4))
     for i, img_item in enumerate(active_images):
         with img_preview_cols[i % 4]:
             st.image(img_item["bytes"], caption=f"画像{i+1}: {img_item['filename']}", use_container_width=True)
-            desc = st.text_input(f"画像{i+1}の用途・説明", placeholder="例：サービスイメージ図", key=f"img_ctx_{i}")
+            desc = st.text_input(f"画像{i+1}の説明", placeholder="例：施策イメージ図", key=f"img_ctx_{i}")
             image_contexts.append({"index": i, "filename": img_item["filename"], "description": desc})
-    st.markdown('</div>', unsafe_allow_html=True)
 
 raw_memo = st.text_area("資料の内容メモ", 
 """直近4ヶ月の売上推移について報告します。
@@ -1174,7 +1169,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 e_sub_title = st.text_input(f"補助項目 タイトル", value=ch.get("sub_title", ""), key=f"sub_t_{idx}")
                 e_sub_body = st.text_area(f"補助項目 本文", value=sanitize_text_empty_lines(ch.get("sub_body", "")), height=68, key=f"sub_b_{idx}")
 
-            # ★ 画像挿入の手動選択UI（active_images を使用） ★
+            # ★ 画像選択UI ★
             e_assigned_indices = []
             e_captions = []
             if active_images:
@@ -1194,7 +1189,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     e_assigned_indices = [chosen_idx]
                     
                     old_caps = ch.get("image_captions", [])
-                    default_cap = old_caps[0] if old_caps else ""
+                    default_cap = old_caps[0] if (old_caps and isinstance(old_caps, list) and len(old_caps) > 0) else ""
                     user_cap = st.text_input("画像のキャプション（任意）", value=default_cap, key=f"cap_{idx}")
                     e_captions = [user_cap]
                     st.success(f"✅ このスライドの右側に 『{active_images[chosen_idx]['filename']}』 を挿入します")
@@ -1206,7 +1201,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
             if e_layout == "step":
                 st.markdown("**ステップ詳細（最大4ステップ）**")
                 s_descs = ch.get("step_descs", [])
-                if not s_descs or len(s_descs) < 4:
+                if not isinstance(s_descs, list) or len(s_descs) < 4:
                     s_descs = [
                         "顧客購買データの詳細分析",
                         "高単価ターゲット層へのアプローチ強化",
@@ -1229,7 +1224,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 c_intro_val = st.text_input("チェックリスト導入文", value=ch.get("checklist_intro", "施策実行における重要確認事項です。"), key=f"c_intro_{idx}")
                 
                 c_items_def = ch.get("checklist_items", [])
-                if not c_items_def:
+                if not isinstance(c_items_def, list) or not c_items_def:
                     c_items_def = [
                         "顧客購買データのクレンジングと抽出完了",
                         "高単価ターゲット層のセグメント確定",
@@ -1251,24 +1246,36 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 e_c_items = ch.get("checklist_items", [])
                 c_outro_val = ch.get("checklist_outro", "")
 
-            # 3. テーブル（表組み）詳細フォーム
+            # 3. テーブル（表組み）詳細フォーム ★エラー回避のため型チェックを厳格化★
             if e_layout == "table" or "表" in e_title or "管理" in e_title or "プラン" in e_title:
                 st.markdown("**📋 表組み（テーブル）データ設定**")
-                tbl_raw = ch.get("table") or {}
+                tbl_raw = ch.get("table")
+                if not isinstance(tbl_raw, dict):
+                    tbl_raw = {}
+
                 h_list = tbl_raw.get("headers", ["施策項目", "担当部門", "完了期日", "進捗状況"])
+                if not isinstance(h_list, list):
+                    h_list = ["施策項目", "担当部門", "完了期日", "進捗状況"]
+
                 r_list = tbl_raw.get("rows", [
                     ["データ分析基盤の構築", "DX推進部", "11月15日", "順調"],
                     ["ターゲット層への提案骨子確定", "営業推進室", "11月30日", "着手済"],
                     ["新プロモーション展開", "マーケティング部", "12月20日", "企画中"]
                 ])
+                if not isinstance(r_list, list):
+                    r_list = [
+                        ["データ分析基盤の構築", "DX推進部", "11月15日", "順調"],
+                        ["ターゲット層への提案骨子確定", "営業推進室", "11月30日", "着手済"],
+                        ["新プロモーション展開", "マーケティング部", "12月20日", "企画中"]
+                    ]
                 
-                t_cols_input = st.text_input("列見出し（カンマ区切り・2〜4列）", value=", ".join(h_list), key=f"th_{idx}")
+                t_cols_input = st.text_input("列見出し（カンマ区切り・2〜4列）", value=", ".join(map(str, h_list)), key=f"th_{idx}")
                 e_headers = [c.strip() for c in t_cols_input.split(",") if c.strip()]
                 
                 st.caption("各行のデータ（カンマ区切り）")
                 e_rows = []
                 for ri in range(3):
-                    default_row_str = ", ".join(r_list[ri]) if len(r_list) > ri else ""
+                    default_row_str = ", ".join(map(str, r_list[ri])) if len(r_list) > ri and isinstance(r_list[ri], list) else ""
                     row_str = st.text_input(f"{ri+1}行目", value=default_row_str, key=f"tr_{idx}_{ri}")
                     if row_str.strip():
                         e_rows.append([c.strip() for c in row_str.split(",")])
@@ -1280,10 +1287,13 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     "note": t_note
                 }
             else:
-                e_table = ch.get("table") or {}
+                e_table = ch.get("table") if isinstance(ch.get("table"), dict) else {}
 
             # 4. グラフ設定フォーム
-            c_info = ch.get("chart_info") or extract_chart_data_from_memo(raw_memo)
+            c_info = ch.get("chart_info")
+            if not isinstance(c_info, dict):
+                c_info = extract_chart_data_from_memo(raw_memo)
+
             if e_layout in ["line_chart", "bar_chart"] or (idx == 0 and ("推移" in e_title or "売上" in e_title)):
                 st.markdown("**📊 グラフデータ設定**")
                 g_cols = st.columns(3)
@@ -1396,7 +1406,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
 
                 chart_created = False
 
-                # ★【最重要】画像がシステムに保持されている場合、未指定ならスライド2に強制自動配置★
+                # ★画像が未割り当ての場合、スライド2に強制自動配置★
                 if active_images and len(active_images) > 0:
                     assigned_count = sum(len(ch.get("assigned_image_indices", [])) for ch in edited_chapters)
                     if assigned_count == 0:
@@ -1433,7 +1443,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     elif layout_type == "step" or "フロー" in clean_ch_title or "流れ" in clean_ch_title or "手順" in clean_ch_title or "アクション" in clean_ch_title:
                         target_template_idx = 5 if tpl_slide_count > 5 else 2
                     elif layout_type == "table" or "表" in clean_ch_title or "タスク" in clean_ch_title or "管理" in clean_ch_title or "プラン" in clean_ch_title or "料金" in clean_ch_title:
-                        tbl_data = ch.get("table") or {}
+                        tbl_data = ch.get("table") if isinstance(ch.get("table"), dict) else {}
                         headers = tbl_data.get("headers", [])
                         cols = len(headers) if headers else 3
                         if cols >= 4 and tpl_slide_count > 8: target_template_idx = 8
@@ -1468,7 +1478,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
 
                     # 1. STEP用タグ
                     step_descs = ch.get("step_descs", [])
-                    if not step_descs or len(step_descs) < 4:
+                    if not isinstance(step_descs, list) or len(step_descs) < 4:
                         step_descs = [
                             "顧客購買データの詳細分析",
                             "高単価ターゲット層へのアプローチ強化",
@@ -1483,7 +1493,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     c_intro = ch.get("checklist_intro", "施策実行における重要確認事項です。")
                     c_outro = ch.get("checklist_outro", "全項目の確認完了後、各担当部門にて施策を進行してください。")
                     c_items = ch.get("checklist_items", [])
-                    if not c_items:
+                    if not isinstance(c_items, list) or not c_items:
                         c_items = [
                             "顧客購買データのクレンジングと抽出完了",
                             "高単価ターゲット層のセグメント確定",
@@ -1496,7 +1506,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         ch_map[f"[[チェック項目{k}]]"] = c_items[k - 1] if len(c_items) >= k else ""
 
                     # 3. 表組み用タグ
-                    tbl_data = ch.get("table") or {}
+                    tbl_data = ch.get("table") if isinstance(ch.get("table"), dict) else {}
                     headers = tbl_data.get("headers", ["施策項目", "担当部門", "完了期日", "進捗状況"])
                     rows = tbl_data.get("rows", [
                         ["データ分析基盤の構築", "DX推進部", "11月15日", "順調"],
@@ -1506,13 +1516,13 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     ch_map["[[表の注記]]"] = tbl_data.get("note", ch.get("notice", ""))
 
                     for c_idx in range(1, 5):
-                        h_val = headers[c_idx - 1] if len(headers) >= c_idx else ""
+                        h_val = headers[c_idx - 1] if (isinstance(headers, list) and len(headers) >= c_idx) else ""
                         ch_map[f"[[列見出し{c_idx}]]"] = h_val
 
                     for r_idx in range(1, 4):
-                        row = rows[r_idx - 1] if len(rows) >= r_idx else []
+                        row = rows[r_idx - 1] if (isinstance(rows, list) and len(rows) >= r_idx) else []
                         for c_idx in range(1, 5):
-                            cell_val = row[c_idx - 1] if len(row) >= c_idx else ""
+                            cell_val = row[c_idx - 1] if (isinstance(row, list) and len(row) >= c_idx) else ""
                             ch_map[f"[[行{r_idx}列{c_idx}]]"] = cell_val
 
                     # 置換実行
@@ -1524,7 +1534,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         has_chart=should_draw_chart
                     )
 
-                    # ★ 確実画像挿入処理（通常スライドの右側に100%配置） ★
+                    # ★ 画像挿入処理（通常スライドの右側に100%配置） ★
                     if len(assigned_imgs) > 0 and not should_draw_chart:
                         insert_slide_images_guaranteed(ch_slide, assigned_imgs, captions)
                         for af in assigned_imgs:
@@ -1539,18 +1549,19 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         format_table_and_note(ch_slide)
 
                     # グラフ描画
-                    if should_draw_chart and chart_info:
+                    if should_draw_chart and chart_info and isinstance(chart_info, dict):
                         categories = chart_info.get("categories", ["7月", "8月", "9月", "10月"])
                         series_name = str(chart_info.get("series_name", "売上高（万円）"))
                         raw_values = chart_info.get("values", [100.0, 150.0, 130.0, 200.0])
 
                         values = []
-                        for v in raw_values:
-                            try:
-                                num_str = re.sub(r'[^\d\.]', '', str(v))
-                                values.append(float(num_str) if num_str else 0.0)
-                            except Exception:
-                                values.append(0.0)
+                        if isinstance(raw_values, list):
+                            for v in raw_values:
+                                try:
+                                    num_str = re.sub(r'[^\d\.]', '', str(v))
+                                    values.append(float(num_str) if num_str else 0.0)
+                                except Exception:
+                                    values.append(0.0)
 
                         if categories and values:
                             min_len = min(len(categories), len(values))
@@ -1620,11 +1631,11 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 st.balloons()
                 st.success(f"🎉 『{safe_filename}.pptx』の自動構築が完了しました！")
                 
-                # ★ 画像の挿入結果を画面に明記 ★
+                # 画像の挿入結果を画面に明記
                 if inserted_image_report:
                     st.info("📷 **以下のスライドに画像を配置しました：**\n- " + "\n- ".join(inserted_image_report))
                 elif active_images:
-                    st.warning("⚠️ 画像データは保持されていましたが、スライドへの挿入条件が一致しませんでした。")
+                    st.warning("⚠️ 画像データは保持されていましたが、挿入可能なスライドがありませんでした。")
                 else:
                     st.info("ℹ️ 画像はアップロードされていません。")
 
