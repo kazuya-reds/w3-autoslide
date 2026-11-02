@@ -21,7 +21,7 @@ import unicodedata
 
 st.set_page_config(page_title="W3 AutoSlide", layout="wide")
 
-# カスタムCSS（赤色太字ボタン強固指定）
+# カスタムCSS
 st.markdown("""
     <style>
     img {
@@ -71,7 +71,7 @@ LAYOUT_MAP = {
 LAYOUT_REVERSE_MAP = {v: k for k, v in LAYOUT_MAP.items()}
 
 # ==========================================
-# API呼び出し用リトライエンジン（503/429混雑対策）
+# API呼び出し用リトライエンジン
 # ==========================================
 def call_gemini_with_retry(client, prompt, max_retries=5):
     model_name = 'gemini-3.6-flash'
@@ -278,7 +278,7 @@ def ensure_page_number(slide, page_num):
         p.font.size = Pt(12)
 
 # ==========================================
-# グラフフォント（メイリオ ＋ 赤テーマ色 ＋ タイトル反映）
+# グラフフォント設定
 # ==========================================
 def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
     ns_a = nsdecls("a")
@@ -334,7 +334,7 @@ def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
             pass
 
 # ==========================================
-# STEP 1〜4 完全固定構築 ＆ 余白拡大 ＆ アイコン上下左右完全中央揃え
+# STEP完全固定構築 ＆ 余白拡大
 # ==========================================
 def build_perfect_steps(slide, step_descs):
     main_body_shape = None
@@ -453,7 +453,7 @@ def build_perfect_steps(slide, step_descs):
                         r.font.color.rgb = RGBColor(255, 255, 255)
 
 # ==========================================
-# ★P6 チェックリスト：背景グレー四角に対する「縦の中央揃え」エンジン★
+# チェックリスト：縦の中央揃え
 # ==========================================
 def format_checklist_slide(slide):
     intro_shape = None
@@ -517,7 +517,7 @@ def format_checklist_slide(slide):
             outro_shape.top = int(box_shape.top + box_shape.height + Pt(14.0))
 
 # ==========================================
-# P5 表組み：文字量に応じた列幅自動配分 ＆ 注釈9pt被り解消エンジン
+# 表組み：列幅自動配分
 # ==========================================
 def adjust_table_column_widths_by_content(table, total_width_pt=671.1):
     num_cols = len(table.columns)
@@ -583,7 +583,7 @@ def format_table_and_note(slide, total_width_pt=671.1):
         note_shape.top = int(tbl_shape.top + tbl_shape.height + Pt(16.0))
 
 # ==========================================
-# ★P2・P3 要素位置・整列エンジン（主要見出し・補助項目縦線のミリ単位完全整列）★
+# 要素位置・整列エンジン
 # ==========================================
 def align_all_headers_and_connectors(slide, has_sub_item=True, has_chart=False):
     main_title = None
@@ -612,7 +612,6 @@ def align_all_headers_and_connectors(slide, has_sub_item=True, has_chart=False):
             except Exception:
                 pass
 
-    # 1. 主要見出しの赤バー: 左端113.7pt、高さ17.0pt、Y座標を文字中央にジャストフィット
     for shp in slide.shapes:
         sname = shp.name.upper()
         if "SECTION_LINE" in sname or (sname == "SECTION_LINE"):
@@ -631,7 +630,6 @@ def align_all_headers_and_connectors(slide, has_sub_item=True, has_chart=False):
         main_body.top = int(main_title.top + title_h + Pt(12.0))
         main_body.width = Pt(220)
 
-    # 2. 補助項目タイトルの縦線: 左端113.7pt（赤バーの左端と完全同一直線）、高さ13.0pt、文字中央にジャストフィット
     if has_sub_item and not has_chart:
         for shp in slide.shapes:
             sname = shp.name.upper()
@@ -652,7 +650,7 @@ def adjust_shapes_for_chart(slide):
             shape.width = Pt(220)
 
 # ==========================================
-# ★確実画像配置エンジン（100%確実に右側に自動挿入・レイアウト調整）★
+# ★確実画像配置エンジン★
 # ==========================================
 def insert_slide_images_guaranteed(slide, assigned_files, captions=None):
     if not assigned_files or len(assigned_files) == 0:
@@ -665,7 +663,6 @@ def insert_slide_images_guaranteed(slide, assigned_files, captions=None):
                     pass
         return
 
-    # 1. テンプレートに既存の画像枠（[[画像1]], [[画像2]]）があるかチェック
     placeholder_shapes = {}
     caption_shapes = {}
     for shp in slide.shapes:
@@ -678,7 +675,6 @@ def insert_slide_images_guaranteed(slide, assigned_files, captions=None):
 
     used_indices = []
 
-    # 2. 既存の枠があればそこにフィットして挿入
     for idx, img_file in enumerate(assigned_files):
         if idx in placeholder_shapes:
             box = placeholder_shapes[idx]
@@ -717,7 +713,6 @@ def insert_slide_images_guaranteed(slide, assigned_files, captions=None):
         except Exception:
             pass
 
-    # 3. 枠が見つからなかった場合：スライド右側にアスペクト比維持で確実に自動配置
     remaining_files = [f for i, f in enumerate(assigned_files) if i not in used_indices]
     if remaining_files:
         for shp in slide.shapes:
@@ -782,7 +777,7 @@ def insert_slide_images_guaranteed(slide, assigned_files, captions=None):
                     p.font.color.rgb = RGBColor(120, 120, 120)
 
 # ==========================================
-# ★P1 INDEX目次スライド：番号赤色化 ＆ ページ番号左揃え整列★
+# INDEX目次スライド
 # ==========================================
 def format_and_align_index_slide(slide):
     title_shapes = {}
@@ -850,7 +845,7 @@ def format_and_align_index_slide(slide):
                         r.font.bold = True
 
 # ==========================================
-# スライドタイトルの数字赤色化 ＆ フォントサイズ完全保持
+# スライドタイトルの数字赤色化
 # ==========================================
 def format_chapter_title_paragraph(p, ch_num, ch_title):
     clean_title = re.sub(r'^\d+[\.\s_]*', '', str(ch_title)).strip() if ch_title else ""
@@ -875,7 +870,7 @@ def format_chapter_title_paragraph(p, ch_num, ch_title):
     if base_font_size: r1.font.size = base_font_size
 
 # ==========================================
-# 段落置換処理（空行自動除去付き）
+# 段落置換処理
 # ==========================================
 def process_paragraph_runs(p, replace_map, chapter_num=None, chapter_title=None, is_cover=False):
     if "00" in p.text or "[[章タイトル]]" in p.text:
@@ -1275,7 +1270,10 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
             # 3. テーブル（表組み）詳細フォーム
             if e_layout == "table" or "表" in e_title or "管理" in e_title or "プラン" in e_title:
                 st.markdown("**📋 表組み（テーブル）データ設定**")
-                tbl_raw = ch.get("table", {})
+                
+                # ★修正箇所：None回避のため or {} を追加★
+                tbl_raw = ch.get("table") or {}
+                
                 h_list = tbl_raw.get("headers", ["施策項目", "担当部門", "完了期日", "進捗状況"])
                 r_list = tbl_raw.get("rows", [
                     ["データ分析基盤の構築", "DX推進部", "11月15日", "順調"],
@@ -1301,7 +1299,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     "note": t_note
                 }
             else:
-                e_table = ch.get("table", {})
+                e_table = ch.get("table") or {}
 
             # 4. グラフ設定フォーム
             c_info = ch.get("chart_info") or extract_chart_data_from_memo(raw_memo)
@@ -1417,7 +1415,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
 
                 chart_created = False
 
-                # ★【最重要】画像がアップロードされている場合の確実強制割り当て処理★
                 if uploaded_files and len(uploaded_files) > 0:
                     all_assigned = set()
                     for ch in edited_chapters:
@@ -1463,7 +1460,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     elif layout_type == "step" or "フロー" in clean_ch_title or "流れ" in clean_ch_title or "手順" in clean_ch_title or "アクション" in clean_ch_title:
                         target_template_idx = 5 if tpl_slide_count > 5 else 2
                     elif layout_type == "table" or "表" in clean_ch_title or "タスク" in clean_ch_title or "管理" in clean_ch_title or "プラン" in clean_ch_title or "料金" in clean_ch_title:
-                        tbl_data = ch.get("table", {})
+                        tbl_data = ch.get("table") or {}
                         headers = tbl_data.get("headers", [])
                         cols = len(headers) if headers else 3
                         if cols >= 4 and tpl_slide_count > 8: target_template_idx = 8
@@ -1528,7 +1525,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         ch_map[f"[[チェック項目{k}]]"] = c_items[k - 1] if len(c_items) >= k else ""
 
                     # 3. 表組み（テーブル）用タグ
-                    tbl_data = ch.get("table", {})
+                    tbl_data = ch.get("table") or {}
                     headers = tbl_data.get("headers", ["施策項目", "担当部門", "完了期日", "進捗状況"])
                     rows = tbl_data.get("rows", [
                         ["データ分析基盤の構築", "DX推進部", "11月15日", "順調"],
@@ -1556,15 +1553,15 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         has_chart=should_draw_chart
                     )
 
-                    # ★ 確実画像挿入処理（枠があっても無くても確実に挿入・レイアウト調整） ★
+                    # ★ 確実画像挿入処理 ★
                     if not should_draw_chart:
                         insert_slide_images_guaranteed(ch_slide, assigned_files, captions)
 
-                    # P6 チェックリストの縦の中央揃え＆余白調整
+                    # P6 チェックリスト
                     if layout_type == "checklist" or "確認" in clean_ch_title or "チェック" in clean_ch_title:
                         format_checklist_slide(ch_slide)
 
-                    # P5 表組みの文字量に応じた列幅自動配分 ＆ 注釈被り解消
+                    # P5 表組み
                     if layout_type == "table" or "表" in clean_ch_title or "タスク" in clean_ch_title or "管理" in clean_ch_title or "プラン" in clean_ch_title or "料金" in clean_ch_title:
                         format_table_and_note(ch_slide)
 
