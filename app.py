@@ -1246,7 +1246,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 e_c_items = ch.get("checklist_items", [])
                 c_outro_val = ch.get("checklist_outro", "")
 
-            # 3. テーブル（表組み）詳細フォーム ★エラー回避のため型チェックを厳格化★
+            # 3. テーブル（表組み）詳細フォーム
             if e_layout == "table" or "表" in e_title or "管理" in e_title or "プラン" in e_title:
                 st.markdown("**📋 表組み（テーブル）データ設定**")
                 tbl_raw = ch.get("table")
