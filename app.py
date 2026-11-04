@@ -210,7 +210,7 @@ def fix_all_xml_integrity_safe(prs):
     for sld in prs.slides:
         tree = sld.shapes._spTree
         for node in tree.iter():
-            # 1. cNvPr の id を一意な連番に更新
+            # 1. cNvPr の id を重複のない連番に更新
             if node.tag.endswith('cNvPr'):
                 global_id += 1
                 node.attrib['id'] = str(global_id)
@@ -230,7 +230,7 @@ def fix_all_xml_integrity_safe(prs):
     except Exception:
         pass
 
-    # 4. 各スライド内の孤立リレーションも消去
+    # 4. 各スライド内の使われなくなった孤立リレーションも消去
     for sld in prs.slides:
         try:
             used_rids = set(
@@ -348,6 +348,7 @@ def build_perfect_steps(slide, step_descs, body_text=""):
         for k in range(3, 5):
             if k not in step_badges:
                 new_b_el = copy.deepcopy(base_b._element)
+                # 複製直後に creationId を新品のUUIDに書き換えて重複を防止
                 for c_node in new_b_el.iter():
                     if c_node.tag.endswith('creationId'):
                         c_node.attrib['id'] = f"{{{str(uuid.uuid4()).upper()}}}"
