@@ -204,7 +204,7 @@ def ensure_page_number(slide, page_num):
         p.font.bold = True
         p.font.color.rgb = RGBColor(0, 0, 0)
 
-# ★【最重要】PowerPointの修復警告を根本根絶するID＆リレーション修復エンジン★
+# ★【最重要】PowerPointの修復警告を完全根絶するID＆リレーション修復エンジン★
 def fix_all_xml_integrity_safe(prs):
     global_id = 100
     for sld in prs.slides:
@@ -225,7 +225,7 @@ def fix_all_xml_integrity_safe(prs):
             for sld_id in prs.slides._sldIdLst
         )
         rels_to_del = []
-        for rId, rel in prs.part.rels.items():
+        for rId, rel in list(prs.part.rels.items()):
             if rel.reltype == "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" and rId not in valid_rids:
                 rels_to_del.append(rId)
         for rId in rels_to_del:
@@ -1517,10 +1517,10 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     if s_i > 0:
                         ensure_page_number(sld, s_i)
 
-                # ★【最重要】PowerPointの修復警告を完全根絶する整合性修正★
+                # 6. ID振り直し処理（PowerPointの修復警告を完全根絶）
                 fix_all_xml_integrity_safe(prs)
 
-                # 6. 保存
+                # 7. 保存
                 safe_filename = re.sub(r'[/\\:*?"<>|]', '_', doc_title.strip())
                 if not safe_filename:
                     safe_filename = "提案書"
