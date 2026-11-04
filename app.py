@@ -203,12 +203,11 @@ def ensure_page_number(slide, page_num):
         p.font.bold = True
         p.font.color.rgb = RGBColor(0, 0, 0)
 
-# ★【最重要】PowerPointの「修復警告」を根本根絶するID採番修復エンジン★
+# ID振り直し処理（PowerPointの修復警告を完全根絶）
 def fix_all_shape_ids_safe(prs):
     global_id = 100
     for sld in prs.slides:
         for node in sld.shapes._spTree.iter():
-            # cNvPr タグの id を一意に書き換え
             if node.tag.endswith('cNvPr'):
                 global_id += 1
                 node.attrib['id'] = str(global_id)
@@ -1123,7 +1122,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 e_s_descs = ch.get("step_descs", [])
 
             # 2. チェックリスト詳細フォーム
-            if e_layout == "checklist" or "確認" in e_title or "チェック" in e_title or "課題" in e_title:
+            if e_layout == "checklist":
                 st.markdown("**✅ チェックリスト設定（最大6項目）**")
                 c_intro_val = st.text_input("チェックリスト導入文", value=ch.get("checklist_intro", "施策実行における重要確認事項です。"), key=f"c_intro_{idx}")
                 c_items_def = ch.get("checklist_items", [])
@@ -1148,16 +1147,22 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 e_c_items = ch.get("checklist_items", [])
                 c_outro_val = ch.get("checklist_outro", "")
 
-            # 3. テーブル詳細フォーム
-            if e_layout == "table" or "表" in e_title or "管理" in e_title or "プラン" in e_title:
+            # 3. テーブル詳細フォーム（★NoneTypeエラー完全防止★）
+            if e_layout == "table":
                 st.markdown("**📋 表組み（テーブル）データ設定**")
-                tbl_raw = ch.get("table", {})
-                h_list = tbl_raw.get("headers", ["施策項目", "担当部門", "完了期日", "進捗状況"])
-                r_list = tbl_raw.get("rows", [
-                    ["データ分析基盤の構築", "DX推進部", "11月15日", "順調"],
-                    ["ターゲット層への提案骨子確定", "営業推進室", "11月30日", "着手済"],
-                    ["新プロモーション展開", "マーケティング部", "12月20日", "企画中"]
-                ])
+                tbl_raw = ch.get("table")
+                if not isinstance(tbl_raw, dict):
+                    tbl_raw = {}
+                h_list = tbl_raw.get("headers")
+                if not isinstance(h_list, list) or not h_list:
+                    h_list = ["施策項目", "担当部門", "完了期日", "進捗状況"]
+                r_list = tbl_raw.get("rows")
+                if not isinstance(r_list, list) or not r_list:
+                    r_list = [
+                        ["データ分析基盤の構築", "DX推進部", "11月15日", "順調"],
+                        ["ターゲット層への提案骨子確定", "営業推進室", "11月30日", "着手済"],
+                        ["新プロモーション展開", "マーケティング部", "12月20日", "企画中"]
+                    ]
                 t_cols_input = st.text_input("列見出し（カンマ区切り・2〜4列）", value=", ".join(map(str, h_list)), key=f"th_{idx}")
                 e_headers = [c.strip() for c in t_cols_input.split(",") if c.strip()]
                 st.caption("各行のデータ（カンマ区切り）")
@@ -1170,14 +1175,14 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 t_note = st.text_input("表の注記（任意）", value=tbl_raw.get("note", "※進捗状況は週次定例にて更新します。"), key=f"tn_{idx}")
                 e_table = {"headers": e_headers, "rows": e_rows, "note": t_note}
             else:
-                e_table = ch.get("table", {})
+                e_table = ch.get("table") if isinstance(ch.get("table"), dict) else {}
 
             # 4. グラフ設定フォーム
             c_info = ch.get("chart_info")
             if not isinstance(c_info, dict) or not c_info.get("values"):
                 c_info = extract_chart_data_from_memo(raw_memo)
 
-            if e_layout in ["line_chart", "bar_chart"] or (idx == 0 and ("推移" in e_title or "売上" in e_title or "販売" in e_title)):
+            if e_layout in ["line_chart", "bar_chart"]:
                 st.markdown("**📊 グラフデータ設定**")
                 g_cols = st.columns(3)
                 with g_cols[0]:
@@ -1328,11 +1333,11 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
 
                     if should_draw_chart:
                         target_template_idx = 2
-                    elif layout_type == "checklist" or "確認" in clean_ch_title or "チェック" in clean_ch_title or "課題" in clean_ch_title:
+                    elif layout_type == "checklist":
                         target_template_idx = 9 if tpl_slide_count > 9 else 2
-                    elif layout_type == "step" or "フロー" in clean_ch_title or "手順" in clean_ch_title or "アクション" in clean_ch_title or "施策" in clean_ch_title:
+                    elif layout_type == "step":
                         target_template_idx = 5 if tpl_slide_count > 5 else 2
-                    elif layout_type == "table" or "表" in clean_ch_title or "タスク" in clean_ch_title or "管理" in clean_ch_title:
+                    elif layout_type == "table":
                         target_template_idx = 8 if tpl_slide_count > 8 else 2
                     else:
                         target_template_idx = 2
@@ -1380,18 +1385,24 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     for k in range(1, 7):
                         ch_map[f"[[チェック項目{k}]]"] = c_items[k - 1] if (isinstance(c_items, list) and len(c_items) >= k) else ""
 
-                    tbl_data = ch.get("table", {})
-                    headers = tbl_data.get("headers", ["施策項目", "担当部門", "完了期日", "進捗状況"])
-                    rows = tbl_data.get("rows", [
-                        ["データ分析基盤の構築", "DX推進部", "11月15日", "順調"],
-                        ["ターゲット層への提案骨子確定", "営業推進室", "11月30日", "着手済"],
-                        ["新プロモーション展開", "マーケティング部", "12月20日", "企画中"]
-                    ])
+                    tbl_data = ch.get("table")
+                    if not isinstance(tbl_data, dict):
+                        tbl_data = {}
+                    headers = tbl_data.get("headers")
+                    if not isinstance(headers, list) or not headers:
+                        headers = ["施策項目", "担当部門", "完了期日", "進捗状況"]
+                    rows = tbl_data.get("rows")
+                    if not isinstance(rows, list) or not rows:
+                        rows = [
+                            ["データ分析基盤の構築", "DX推進部", "11月15日", "順調"],
+                            ["ターゲット層への提案骨子確定", "営業推進室", "11月30日", "着手済"],
+                            ["新プロモーション展開", "マーケティング部", "12月20日", "企画中"]
+                        ]
                     ch_map["[[表の注記]]"] = tbl_data.get("note", ch.get("notice", ""))
                     for c_idx in range(1, 5):
-                        ch_map[f"[[列見出し{c_idx}]]"] = headers[c_idx - 1] if (isinstance(headers, list) and len(headers) >= c_idx) else ""
+                        ch_map[f"[[列見出し{c_idx}]]"] = headers[c_idx - 1] if len(headers) >= c_idx else ""
                     for r_idx in range(1, 4):
-                        row = rows[r_idx - 1] if (isinstance(rows, list) and len(rows) >= r_idx) else []
+                        row = rows[r_idx - 1] if len(rows) >= r_idx else []
                         for c_idx in range(1, 5):
                             ch_map[f"[[行{r_idx}列{c_idx}]]"] = row[c_idx - 1] if (isinstance(row, list) and len(row) >= c_idx) else ""
 
@@ -1478,11 +1489,11 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     if s_i > 0:
                         ensure_page_number(sld, s_i)
 
-                # ★【最重要】PowerPointの「修復警告」を完全根絶するID振り直し処理★
+                # 6. ID振り直し処理（PowerPointの修復警告を完全根絶）
                 fix_all_shape_ids_safe(prs)
 
-                # 6. 保存
-                safe_filename = re.sub(r'[\\/:*?"<>|]', '_', doc_title.strip())
+                # 7. 保存
+                safe_filename = re.sub(r'[/\\:*?"<>|]', '_', doc_title.strip())
                 if not safe_filename:
                     safe_filename = "提案書"
                 output_path = f"{safe_filename}.pptx"
