@@ -143,6 +143,7 @@ def extract_chart_data_from_memo(text):
         "values": [1200.0, 1450.0, 1380.0, 1600.0, 1850.0, 1720.0]
     }
 
+# ★第1防衛線：複製時点でGUIDとIDを完全に新品化する安全複製エンジン★
 def duplicate_slide_safe(prs, src_idx):
     src_slide = prs.slides[src_idx]
     new_slide = prs.slides.add_slide(src_slide.slide_layout)
@@ -155,6 +156,11 @@ def duplicate_slide_safe(prs, src_idx):
     rel_map = {}
     for shape in src_slide.shapes:
         new_el = copy.deepcopy(shape._element)
+        # 複製直後に creationId を書き換えて重複を根絶
+        for node in new_el.iter():
+            if node.tag.endswith('creationId'):
+                node.attrib['id'] = f"{{{str(uuid.uuid4()).upper()}}}"
+                
         try:
             r_ids = new_el.xpath('.//@r:embed | .//@r:id')
             for rId in set(r_ids):
@@ -204,21 +210,21 @@ def ensure_page_number(slide, page_num):
         p.font.bold = True
         p.font.color.rgb = RGBColor(0, 0, 0)
 
-# ★【最重要】PowerPointの「修復警告」を完全根絶する整合性修正エンジン★
+# ★第2・第3防衛線：OpenXML整合性完全修復エンジン★
 def fix_all_xml_integrity_safe(prs):
     global_id = 100
     for sld in prs.slides:
         tree = sld.shapes._spTree
         for node in tree.iter():
-            # 1. cNvPr の id を重複のない連番に更新
+            # 1. cNvPr id を完全一意な連番に更新
             if node.tag.endswith('cNvPr'):
                 global_id += 1
                 node.attrib['id'] = str(global_id)
-            # 2. creationId の重複を完全に解消（新しい一意なUUIDを生成）
+            # 2. creationId の重複を完全に解消
             elif node.tag.endswith('creationId'):
                 node.attrib['id'] = f"{{{str(uuid.uuid4()).upper()}}}"
 
-    # 3. 削除されたスライドの孤立したリレーション（rId）を presentation.xml.rels から完全消去
+    # 3. 削除されたスライドの孤立リレーション（幽霊リンク）を完全消去
     try:
         valid_rids = set(
             sld_id.attrib['{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id']
@@ -230,7 +236,7 @@ def fix_all_xml_integrity_safe(prs):
     except Exception:
         pass
 
-    # 4. 各スライド内の使われなくなった孤立リレーションも消去
+    # 4. 各スライド内の孤立リレーションも完全消去
     for sld in prs.slides:
         try:
             used_rids = set(
@@ -348,7 +354,6 @@ def build_perfect_steps(slide, step_descs, body_text=""):
         for k in range(3, 5):
             if k not in step_badges:
                 new_b_el = copy.deepcopy(base_b._element)
-                # 複製直後に creationId を新品のUUIDに書き換えて重複を防止
                 for c_node in new_b_el.iter():
                     if c_node.tag.endswith('creationId'):
                         c_node.attrib['id'] = f"{{{str(uuid.uuid4()).upper()}}}"
