@@ -204,7 +204,7 @@ def ensure_page_number(slide, page_num):
         p.font.bold = True
         p.font.color.rgb = RGBColor(0, 0, 0)
 
-# ★【最重要】PowerPointの「修復警告」を完全根絶する整合性修正エンジン★
+# ★【最重要】PowerPointの修復警告を根本根絶するID＆リレーション修復エンジン★
 def fix_all_xml_integrity_safe(prs):
     global_id = 100
     for sld in prs.slides:
@@ -214,7 +214,7 @@ def fix_all_xml_integrity_safe(prs):
             if node.tag.endswith('cNvPr'):
                 global_id += 1
                 node.attrib['id'] = str(global_id)
-            # 2. creationId の重複を完全に解消（新しいUUIDを生成）
+            # 2. creationId の重複を完全に解消（新しい一意なUUIDを生成）
             elif node.tag.endswith('creationId'):
                 node.attrib['id'] = f"{{{str(uuid.uuid4()).upper()}}}"
 
@@ -336,12 +336,19 @@ def build_perfect_steps(slide, step_descs, body_text=""):
         for k in range(3, 5):
             if k not in step_badges:
                 new_b_el = copy.deepcopy(base_b._element)
+                # 複製直後に creationId を書き換えて重複を防止
+                for c_node in new_b_el.iter():
+                    if c_node.tag.endswith('creationId'):
+                        c_node.attrib['id'] = f"{{{str(uuid.uuid4()).upper()}}}"
                 spTree.append(new_b_el)
                 new_b = slide.shapes[-1]
                 new_b.name = f"STEP_{k}_BADGE"
                 step_badges[k] = new_b
             if k not in step_texts:
                 new_t_el = copy.deepcopy(base_t._element)
+                for c_node in new_t_el.iter():
+                    if c_node.tag.endswith('creationId'):
+                        c_node.attrib['id'] = f"{{{str(uuid.uuid4()).upper()}}}"
                 spTree.append(new_t_el)
                 new_t = slide.shapes[-1]
                 new_t.name = f"STEP_{k}_TEXT"
