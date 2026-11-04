@@ -17,6 +17,7 @@ import re
 import time
 import copy
 import os
+import uuid
 import unicodedata
 
 st.set_page_config(page_title="W3 AutoSlide", layout="wide")
@@ -203,14 +204,34 @@ def ensure_page_number(slide, page_num):
         p.font.bold = True
         p.font.color.rgb = RGBColor(0, 0, 0)
 
-# ID振り直し処理（PowerPointの修復警告を完全根絶）
-def fix_all_shape_ids_safe(prs):
+# ★【最重要】PowerPointの「修復警告」を完全根絶する整合性修正エンジン★
+def fix_all_xml_integrity_safe(prs):
     global_id = 100
     for sld in prs.slides:
-        for node in sld.shapes._spTree.iter():
+        tree = sld.shapes._spTree
+        for node in tree.iter():
+            # 1. cNvPr の id を一意な連番に更新
             if node.tag.endswith('cNvPr'):
                 global_id += 1
                 node.attrib['id'] = str(global_id)
+            # 2. creationId の重複を完全に解消（新しいUUIDを生成）
+            elif node.tag.endswith('creationId'):
+                node.attrib['id'] = f"{{{str(uuid.uuid4()).upper()}}}"
+
+    # 3. 削除されたスライドの孤立したリレーション（rId）を presentation.xml.rels から完全消去
+    try:
+        valid_rids = set(
+            sld_id.attrib['{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id']
+            for sld_id in prs.slides._sldIdLst
+        )
+        rels_to_del = []
+        for rId, rel in prs.part.rels.items():
+            if rel.reltype == "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" and rId not in valid_rids:
+                rels_to_del.append(rId)
+        for rId in rels_to_del:
+            prs.part.rels.pop(rId)
+    except Exception:
+        pass
 
 def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
     ns_a = nsdecls("a")
@@ -1147,7 +1168,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 e_c_items = ch.get("checklist_items", [])
                 c_outro_val = ch.get("checklist_outro", "")
 
-            # 3. テーブル詳細フォーム（★NoneTypeエラー完全防止★）
+            # 3. テーブル詳細フォーム（NoneTypeガード済み）
             if e_layout == "table":
                 st.markdown("**📋 表組み（テーブル）データ設定**")
                 tbl_raw = ch.get("table")
@@ -1489,10 +1510,10 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     if s_i > 0:
                         ensure_page_number(sld, s_i)
 
-                # 6. ID振り直し処理（PowerPointの修復警告を完全根絶）
-                fix_all_shape_ids_safe(prs)
+                # ★【最重要】PowerPointの修復警告を完全根絶する整合性修正★
+                fix_all_xml_integrity_safe(prs)
 
-                # 7. 保存
+                # 6. 保存
                 safe_filename = re.sub(r'[/\\:*?"<>|]', '_', doc_title.strip())
                 if not safe_filename:
                     safe_filename = "提案書"
