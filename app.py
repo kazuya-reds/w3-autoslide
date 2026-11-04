@@ -112,7 +112,6 @@ def sanitize_main_item(main_item, clean_ch_title):
                 main_item = clean_ch_title[:12]
     return main_item
 
-# ★カンマ区切り数値（1,200万円など）に完全対応した数値抽出パーサー★
 def extract_chart_data_from_memo(text):
     pattern = r'(\d{1,2}月)[^\d\n]{0,10}?(\d{1,3}(?:,\d{3})*(?:\.\d+)?|\d+(?:\.\d+)?)\s*(?:万|万円)?'
     matches = re.findall(pattern, text)
@@ -151,20 +150,10 @@ def duplicate_slide_safe(prs, src_idx):
         tag = child.tag.split('}')[-1]
         if tag in ['sp', 'graphicFrame', 'grpSp', 'cxnSp', 'pic']:
             spTree.remove(child)
-    max_id = 2000
-    for sld in prs.slides:
-        for node in sld.shapes._spTree.iter():
-            if 'id' in node.attrib and node.attrib['id'].isdigit():
-                val = int(node.attrib['id'])
-                if val > max_id:
-                    max_id = val
+
     rel_map = {}
     for shape in src_slide.shapes:
         new_el = copy.deepcopy(shape._element)
-        for node in new_el.iter():
-            if 'id' in node.attrib and node.attrib['id'].isdigit():
-                max_id += 1
-                node.attrib['id'] = str(max_id)
         try:
             r_ids = new_el.xpath('.//@r:embed | .//@r:id')
             for rId in set(r_ids):
@@ -183,9 +172,7 @@ def duplicate_slide_safe(prs, src_idx):
         spTree.append(new_el)
     return new_slide
 
-# ★P5〜7の抜けを100%防止するページ番号配置関数★
 def ensure_page_number(slide, page_num):
-    # 既存のページ番号シェイプを探す
     found_shp = None
     for shp in slide.shapes:
         is_ph = (shp.is_placeholder and shp.placeholder_format.type == PP_PLACEHOLDER.SLIDE_NUMBER)
@@ -205,7 +192,6 @@ def ensure_page_number(slide, page_num):
         p.font.bold = True
         p.font.color.rgb = RGBColor(0, 0, 0)
     else:
-        # 存在しないスライド（STEPやチェックリスト）には右下に確実に新規描画
         txBox = slide.shapes.add_textbox(Pt(720), Pt(542), Pt(80), Pt(28))
         tf = txBox.text_frame
         tf.word_wrap = False
@@ -216,6 +202,16 @@ def ensure_page_number(slide, page_num):
         p.font.size = Pt(12)
         p.font.bold = True
         p.font.color.rgb = RGBColor(0, 0, 0)
+
+# ★【最重要】PowerPointの「修復警告」を根本根絶するID採番修復エンジン★
+def fix_all_shape_ids_safe(prs):
+    global_id = 100
+    for sld in prs.slides:
+        for node in sld.shapes._spTree.iter():
+            # cNvPr タグの id を一意に書き換え
+            if node.tag.endswith('cNvPr'):
+                global_id += 1
+                node.attrib['id'] = str(global_id)
 
 def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
     ns_a = nsdecls("a")
@@ -252,7 +248,6 @@ def wipe_right_side_shapes(slide):
         except Exception:
             pass
 
-# ★P6の被りを完全に解消するSTEP構築★
 def build_perfect_steps(slide, step_descs, body_text=""):
     wipe_right_side_shapes(slide)
     
@@ -278,7 +273,6 @@ def build_perfect_steps(slide, step_descs, body_text=""):
         except Exception:
             pass
 
-    # 本文に箇条書きが入って長大化している場合は短縮リード文に整形
     clean_body = body_text
     if "【" in clean_body:
         clean_body = clean_body.split("【")[0].strip()
@@ -333,7 +327,6 @@ def build_perfect_steps(slide, step_descs, body_text=""):
                 new_t.name = f"STEP_{k}_TEXT"
                 step_texts[k] = new_t
 
-    # 本文と被らない高さから開始（動的配置）
     start_top = Pt(200.0)
     step_gap = Pt(45.0)
 
@@ -499,7 +492,6 @@ def format_table_and_note(slide, total_width_pt=671.1):
                 p.font.size = Pt(9.5)
                 p.font.color.rgb = RGBColor(120, 120, 120)
 
-# ★不要な縦線を完全削除するグラフ左側スタック整列★
 def format_chart_slide_left_column(slide):
     main_line = None
     main_title = None
@@ -555,7 +547,6 @@ def format_chart_slide_left_column(slide):
         main_body.height = int(b_h)
         curr_y += b_h + Pt(14.0)
 
-    # 補助項目がない場合は、不要な縦線コネクタを完全削除
     has_sub = (sub_title and sub_title.has_text_frame and sub_title.text_frame.text.strip()) or \
               (sub_body and sub_body.has_text_frame and sub_body.text_frame.text.strip())
 
@@ -587,7 +578,6 @@ def format_chart_slide_left_column(slide):
             sb_lines = len(sb_txt) // 16 + sb_txt.count('\n') + 1
             sub_body.height = int(Pt(sb_lines * 15.0))
     else:
-        # サブ項目がない場合は縦線・空テキスト枠を完全削除
         for del_shp in [sub_line, sub_title, sub_body]:
             if del_shp:
                 try:
@@ -705,7 +695,7 @@ def format_and_align_index_slide(slide):
 
     for shp in slide.shapes:
         sname = shp.name.upper()
-        for k in range(1, 12):
+        for k in range(1, 15):
             if f"INDEX_{k}_TITLE" in sname:
                 title_shapes[k] = shp
             elif f"INDEX_{k}_PAGE" in sname:
@@ -713,7 +703,7 @@ def format_and_align_index_slide(slide):
 
     max_title_right = Pt(460.0)
 
-    for k in range(1, 12):
+    for k in range(1, 15):
         if k in title_shapes:
             t_shp = title_shapes[k]
             if t_shp.has_text_frame and t_shp.text_frame.text.strip():
@@ -750,7 +740,7 @@ def format_and_align_index_slide(slide):
 
     page_left_pos = max(Pt(550.0), int(max_title_right + Pt(25.0)))
 
-    for k in range(1, 12):
+    for k in range(1, 15):
         if k in page_shapes:
             p_shp = page_shapes[k]
             if p_shp.has_text_frame and p_shp.text_frame.text.strip():
@@ -992,7 +982,7 @@ with col_btn1:
                        - "step", "checklist", "table", "line_chart" には画像を割り当てないでください。
                        - アップロードされた全画像（インデックス 0〜{len(image_contexts)-1}）を1枚残らず使い切るため、画像用の章（"layout_type": "image"）を画像の枚数分だけ【新規に作成】し、それぞれの画像インデックスを assigned_image_indices に割り当ててください。
                     4. "step" の場合:
-                       - "step_descs": メモから抽出した具体的な4つのアクションステップ文字列配列（例: ["1の施策", "2の施策", "3の施策", "4の施策"]）。必ずメモの内容から抽出してください。
+                       - "step_descs": メモから抽出した具体的な4つのアクションステップ文字列配列（例: ["1の施策", "2の施策", "3の施策", "4の施策"]）。
                     5. "checklist" の場合:
                        - "checklist_intro": 導入文
                        - "checklist_items": メモから抽出した最大6つのチェック項目文字列配列
@@ -1111,7 +1101,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
             if e_layout == "step":
                 st.markdown("**ステップ詳細（最大4ステップ）**")
                 s_descs = ch.get("step_descs", [])
-                # 本文から箇条書きを抽出する救済処理
                 if (not isinstance(s_descs, list) or len(s_descs) < 4) and e_body:
                     b_steps = re.findall(r'(?:\d+[\.\s、]|\・|\-)\s*([^\n]+)', e_body)
                     if len(b_steps) >= 3:
@@ -1196,7 +1185,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 with g_cols[1]:
                     g_cats_str = st.text_input("カテゴリ（カンマ区切り）", value=",".join(map(str, c_info.get("categories", ["4月","5月","6月","7月","8月","9月"]))), key=f"gc_{idx}")
                 with g_cols[2]:
-                    # カンマを除去して数値化
                     clean_vals = [str(v).replace(',', '') for v in c_info.get("values", [1200, 1450, 1380, 1600, 1850, 1720])]
                     g_vals_str = st.text_input("数値データ（カンマ区切り）", value=",".join(clean_vals), key=f"gv_{idx}")
 
@@ -1235,7 +1223,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 "chart_info": edited_c_info
             })
 
-    # ★【超重要】未割り当て画像を100%すべて使い切る自動スライド追加エンジン★
+    # 未割り当て画像を100%全件スライド化
     if active_images:
         assigned_indices = set()
         for ch in edited_chapters:
@@ -1248,7 +1236,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
             img_data = active_images[un_i]
             img_name = img_data.get("filename", f"画像{un_i+1}")
             img_title = os.path.splitext(img_name)[0]
-            # 未割り当て画像用の専用スライドを自動追加
             edited_chapters.append({
                 "chapter_title": f"{img_title}の概要",
                 "layout_type": "image",
@@ -1339,7 +1326,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         (is_chart_keyword and ch_idx == 0)
                     )
 
-                    # テンプレート選定
                     if should_draw_chart:
                         target_template_idx = 2
                     elif layout_type == "checklist" or "確認" in clean_ch_title or "チェック" in clean_ch_title or "課題" in clean_ch_title:
@@ -1370,7 +1356,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     ch_map["[[補足文]]"] = notice_val
                     ch_map["[[注意文]]"] = notice_val
 
-                    # STEPタグ
                     step_descs = ch.get("step_descs", [])
                     if (not isinstance(step_descs, list) or len(step_descs) < 4) and body_text_val:
                         b_steps = re.findall(r'(?:\d+[\.\s、]|\・|\-)\s*([^\n]+)', body_text_val)
@@ -1387,7 +1372,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         desc_s = step_descs[idx_s - 1] if len(step_descs) >= idx_s else ""
                         ch_map[f"[[STEP{idx_s}の説明]]"] = desc_s
 
-                    # チェックリストタグ
                     c_intro = ch.get("checklist_intro", "施策実行における重要確認事項です。")
                     c_outro = ch.get("checklist_outro", "全項目の確認完了後、各担当部門にて施策を進行してください。")
                     c_items = ch.get("checklist_items", [])
@@ -1396,7 +1380,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     for k in range(1, 7):
                         ch_map[f"[[チェック項目{k}]]"] = c_items[k - 1] if (isinstance(c_items, list) and len(c_items) >= k) else ""
 
-                    # 表組みタグ
                     tbl_data = ch.get("table", {})
                     headers = tbl_data.get("headers", ["施策項目", "担当部門", "完了期日", "進捗状況"])
                     rows = tbl_data.get("rows", [
@@ -1418,7 +1401,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         is_cover=False
                     )
 
-                    # レイアウト別の専用整形
                     if target_template_idx == 5:
                         build_perfect_steps(ch_slide, step_descs, body_text_val)
                     elif target_template_idx == 9:
@@ -1433,7 +1415,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                             for af in assigned_imgs:
                                 inserted_image_report.append(f"スライド {ch_page_num}（{clean_ch_title}）: 『{af['filename']}』")
 
-                    # グラフ描画（正確な数値反映）
                     if should_draw_chart:
                         c_dict = chart_info if (isinstance(chart_info, dict) and chart_info.get("values")) else extract_chart_data_from_memo(raw_memo)
                         categories = c_dict.get("categories", ["4月", "5月", "6月", "7月", "8月", "9月"])
@@ -1460,12 +1441,9 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                                 x_pos, y_pos, cx_pos, cy_pos = Pt(380), Pt(135), Pt(290), Pt(260)
                                 chart_shape = ch_slide.shapes.add_chart(c_type, x_pos, y_pos, cx_pos, cy_pos, chart_data)
                                 chart = chart_shape.chart
-
                                 chart.has_title = True
                                 chart.chart_title.text_frame.text = str(c_dict.get("title", "月別売上推移（万円）"))
 
-                                # フォント＆スタイル
-                                ns_a = nsdecls("a")
                                 for p in chart.chart_title.text_frame.paragraphs:
                                     p.font.name = "メイリオ"
                                     p.font.size = Pt(11)
@@ -1499,6 +1477,9 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                                     p.text = re.sub(r'\[\[.*?\]\]', '', p.text)
                     if s_i > 0:
                         ensure_page_number(sld, s_i)
+
+                # ★【最重要】PowerPointの「修復警告」を完全根絶するID振り直し処理★
+                fix_all_shape_ids_safe(prs)
 
                 # 6. 保存
                 safe_filename = re.sub(r'[\\/:*?"<>|]', '_', doc_title.strip())
