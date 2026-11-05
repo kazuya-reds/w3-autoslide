@@ -142,7 +142,7 @@ def extract_chart_data_from_memo(text):
         "values": [1200.0, 1450.0, 1380.0, 1600.0, 1850.0, 1720.0]
     }
 
-# ★複製直後に GUID を新品 UUID に即時置換する安全複製★
+# ★既存チャートや不要な残骸を完全クリーンアップして複製する安全エンジン★
 def duplicate_slide_safe(prs, src_idx):
     src_slide = prs.slides[src_idx]
     new_slide = prs.slides.add_slide(src_slide.slide_layout)
@@ -154,6 +154,10 @@ def duplicate_slide_safe(prs, src_idx):
 
     rel_map = {}
     for shape in src_slide.shapes:
+        # テンプレートに元からある古いグラフ枠は複製しない（新規描画との二重衝突を防ぐ）
+        if shape.has_chart:
+            continue
+            
         new_el = copy.deepcopy(shape._element)
         for node in new_el.iter():
             if node.tag.endswith('creationId'):
@@ -177,7 +181,6 @@ def duplicate_slide_safe(prs, src_idx):
         spTree.append(new_el)
     return new_slide
 
-# ★テンプレート標準と同一座標（left=623.8pt, top=548.1pt）に統一したページ番号配置★
 def ensure_page_number(slide, page_num):
     found_shp = None
     for shp in slide.shapes:
@@ -221,21 +224,18 @@ def ensure_page_number(slide, page_num):
         p.font.bold = True
         p.font.color.rgb = RGBColor(2, 24, 46)
 
-# ★【核心】OpenXML規格違反・重複・孤立リレーションの完全根絶エンジン★
+# ★OpenXML規格整合性修復エンジン★
 def fix_all_xml_integrity_safe(prs):
     global_id = 100
     for sld in prs.slides:
         tree = sld.shapes._spTree
         for node in tree.iter():
-            # 1. cNvPr id を完全一意な連番に更新
             if node.tag.endswith('cNvPr'):
                 global_id += 1
                 node.attrib['id'] = str(global_id)
-            # 2. creationId の重複を完全に解消（新しいUUIDを生成）
             elif node.tag.endswith('creationId'):
                 node.attrib['id'] = f"{{{str(uuid.uuid4()).upper()}}}"
 
-    # 3. 削除されたスライドの孤立リレーション（幽霊リンク）を presentation.xml.rels から完全消去
     try:
         valid_rids = set(
             sld_id.attrib['{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id']
@@ -247,7 +247,6 @@ def fix_all_xml_integrity_safe(prs):
     except Exception:
         pass
 
-    # 4. 各スライド内の孤立リレーションも消去
     for sld in prs.slides:
         try:
             used_rids = set(
@@ -515,7 +514,6 @@ def format_checklist_slide(slide):
         outro_shape.top = int(box_shape.top + box_shape.height + Pt(14.0))
         outro_shape.width = Pt(660.0)
 
-# ★P6 表組み：空列を作らず、全幅で均等配分★
 def format_table_and_note(slide, total_width_pt=671.1):
     wipe_right_side_shapes(slide)
     tbl_shape = None
@@ -670,7 +668,6 @@ def format_chart_slide_left_column(slide):
                 except Exception:
                     pass
 
-# ★P3 文字が小さい問題解消：写真なしなら全幅展開、写真ありなら2カラム★
 def format_text_or_image_slide_layout(slide, assigned_images, captions=None):
     main_title = None
     main_line = None
@@ -1068,7 +1065,6 @@ with col_btn1:
                         "image_contexts": image_contexts
                     }
 
-                    # ★写真を新規スライドではなく、メモ各章のイメージ写真として添える指示★
                     single_pass_prompt = f"""
                     あなたはプレゼン資料作成のプロコンサルタントです。
                     以下の入力を直接分析し、メモの情報を一切落とさずにプレゼンスライド用のJSONを作成してください。
@@ -1180,7 +1176,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 e_sub_title = st.text_input(f"補助項目 タイトル", value=ch.get("sub_title", ""), key=f"sub_t_{idx}")
                 e_sub_body = st.text_area(f"補助項目 本文", value=sanitize_text_empty_lines(ch.get("sub_body", "")), height=68, key=f"sub_b_{idx}")
 
-            # 画像選択UI（テキストスライドのみ）
             e_assigned_indices = []
             e_captions = []
             if e_layout == "text" and active_images:
@@ -1344,12 +1339,28 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
         with st.spinner("PowerPoint資料を精密構築中..."):
             try:
                 current_dir = os.path.dirname(os.path.abspath(__file__))
-                template_path = os.path.join(current_dir, '資料作成テンプレート_A4横.pptx')
-                if not os.path.exists(template_path):
+                
+                # ★【最重要】自己汚染バグの根絶：真正なテンプレートファイルのみを厳格に探索★
+                template_path = None
+                target_norm = unicodedata.normalize('NFC', '資料作成テンプレート_A4横.pptx')
+                
+                for f in os.listdir(current_dir):
+                    if not f.endswith('.pptx'):
+                        continue
+                    f_norm = unicodedata.normalize('NFC', f)
+                    if f_norm == target_norm or "テンプレート" in f_norm or "template" in f_norm.lower():
+                        template_path = os.path.join(current_dir, f)
+                        break
+
+                if not template_path:
+                    # テンプレート名が見つからない場合、既存の生成ファイルを除外して探索
                     for f in os.listdir(current_dir):
-                        if f.endswith('.pptx'):
+                        if f.endswith('.pptx') and not any(kw in f for kw in ["報告", "提案書", "上期", "成長戦略"]):
                             template_path = os.path.join(current_dir, f)
                             break
+                            
+                if not template_path:
+                    raise FileNotFoundError("『資料作成テンプレート_A4横.pptx』が見つかりません。")
 
                 prs = Presentation(template_path)
                 tpl_slide_count = len(prs.slides)
@@ -1504,6 +1515,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                             for af in assigned_imgs:
                                 inserted_image_report.append(f"スライド {ch_page_num}（{clean_ch_title}）: 『{af['filename']}』")
 
+                    # グラフ描画（凡例非表示・実数値プロット）
                     if should_draw_chart:
                         c_dict = chart_info if (isinstance(chart_info, dict) and chart_info.get("values")) else extract_chart_data_from_memo(raw_memo)
                         categories = c_dict.get("categories", ["4月", "5月", "6月", "7月", "8月", "9月"])
@@ -1572,26 +1584,27 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 # 6. ID・GUID重複＆孤立リレーションの完全パージ
                 fix_all_xml_integrity_safe(prs)
 
-                # 7. 保存
+                # ★【核心】ディスクに保存せず、メモリ上で完結させて自己汚染をゼロにする★
+                output_stream = io.BytesIO()
+                prs.save(output_stream)
+                output_stream.seek(0)
+
                 safe_filename = re.sub(r'[/\\:*?"<>|]', '_', doc_title.strip())
                 if not safe_filename:
                     safe_filename = "提案書"
-                output_path = f"{safe_filename}.pptx"
-
-                prs.save(output_path)
+                download_filename = f"{safe_filename}.pptx"
 
                 st.balloons()
-                st.success(f"🎉 『{safe_filename}.pptx』の自動構築が完了しました！（全 {len(prs.slides)} ページ）")
+                st.success(f"🎉 『{download_filename}』の自動構築が完了しました！（全 {len(prs.slides)} ページ）")
                 
                 if inserted_image_report:
                     st.info("📷 **以下のスライドにイメージ写真を添えました：**\n- " + "\n- ".join(inserted_image_report))
 
-                with open(output_path, "rb") as f:
-                    st.download_button(
-                        label=f"📥 『{safe_filename}.pptx』をダウンロード",
-                        data=f,
-                        file_name=output_path,
-                        mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                    )
+                st.download_button(
+                    label=f"📥 『{download_filename}』をダウンロード",
+                    data=output_stream,
+                    file_name=download_filename,
+                    mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                )
             except Exception as e:
                 st.error(f"エラーが発生しました: {e}")
