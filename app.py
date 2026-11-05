@@ -142,6 +142,7 @@ def extract_chart_data_from_memo(text):
         "values": [1200.0, 1450.0, 1380.0, 1600.0, 1850.0, 1720.0]
     }
 
+# ★複製直後に GUID を新品 UUID に即時置換する安全複製★
 def duplicate_slide_safe(prs, src_idx):
     src_slide = prs.slides[src_idx]
     new_slide = prs.slides.add_slide(src_slide.slide_layout)
@@ -176,7 +177,7 @@ def duplicate_slide_safe(prs, src_idx):
         spTree.append(new_el)
     return new_slide
 
-# ★テンプレート標準と同一座標・スタイルに完全統一したページ番号配置★
+# ★テンプレート標準と同一座標（left=623.8pt, top=548.1pt）に統一したページ番号配置★
 def ensure_page_number(slide, page_num):
     found_shp = None
     for shp in slide.shapes:
@@ -186,7 +187,6 @@ def ensure_page_number(slide, page_num):
             found_shp = shp
             break
 
-    # テンプレート標準の正確なEMU座標（left=623.8pt, top=548.1pt, width=189.4pt, height=31.6pt）
     if found_shp and found_shp.has_text_frame:
         found_shp.left = Pt(623.8)
         found_shp.top = Pt(548.1)
@@ -221,18 +221,21 @@ def ensure_page_number(slide, page_num):
         p.font.bold = True
         p.font.color.rgb = RGBColor(2, 24, 46)
 
-# ★OpenXML整合性修復エンジン★
+# ★【核心】OpenXML規格違反・重複・孤立リレーションの完全根絶エンジン★
 def fix_all_xml_integrity_safe(prs):
     global_id = 100
     for sld in prs.slides:
         tree = sld.shapes._spTree
         for node in tree.iter():
+            # 1. cNvPr id を完全一意な連番に更新
             if node.tag.endswith('cNvPr'):
                 global_id += 1
                 node.attrib['id'] = str(global_id)
+            # 2. creationId の重複を完全に解消（新しいUUIDを生成）
             elif node.tag.endswith('creationId'):
                 node.attrib['id'] = f"{{{str(uuid.uuid4()).upper()}}}"
 
+    # 3. 削除されたスライドの孤立リレーション（幽霊リンク）を presentation.xml.rels から完全消去
     try:
         valid_rids = set(
             sld_id.attrib['{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id']
@@ -244,6 +247,7 @@ def fix_all_xml_integrity_safe(prs):
     except Exception:
         pass
 
+    # 4. 各スライド内の孤立リレーションも消去
     for sld in prs.slides:
         try:
             used_rids = set(
@@ -276,11 +280,9 @@ def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
             except Exception:
                 pass
 
-# ★スライド番号を消さずに、右半分の残骸図形だけを安全に消去★
 def wipe_right_side_shapes(slide):
     shapes_to_del = []
     for shp in slide.shapes:
-        # スライド番号プレースホルダー（Y座標 500pt 以上）は絶対に消さない
         if shp.top > Pt(500) and shp.left > Pt(500):
             continue
         if shp.is_placeholder and shp.placeholder_format.type == PP_PLACEHOLDER.SLIDE_NUMBER:
@@ -513,7 +515,7 @@ def format_checklist_slide(slide):
         outro_shape.top = int(box_shape.top + box_shape.height + Pt(14.0))
         outro_shape.width = Pt(660.0)
 
-# ★P6 表組み：空列を作らず、全幅で自動配分★
+# ★P6 表組み：空列を作らず、全幅で均等配分★
 def format_table_and_note(slide, total_width_pt=671.1):
     wipe_right_side_shapes(slide)
     tbl_shape = None
@@ -543,7 +545,6 @@ def format_table_and_note(slide, total_width_pt=671.1):
         tbl_shape.top = Pt(150.0)
         num_cols = len(table.columns)
 
-        # 実質空の列（ヘッダー・データ共に空）があれば検出
         valid_cols = []
         for c in range(num_cols):
             has_val = any(row.cells[c].text_frame.text.strip() != "" for row in table.rows)
@@ -765,7 +766,6 @@ def format_text_or_image_slide_layout(slide, assigned_images, captions=None):
                 except Exception:
                     pass
 
-    # 画像がある場合は右側に美麗配置
     if has_image:
         img_bytes = assigned_images[0]["bytes"]
         pil_img = Image.open(io.BytesIO(img_bytes))
@@ -1068,7 +1068,7 @@ with col_btn1:
                         "image_contexts": image_contexts
                     }
 
-                    # ★メモ内容の各章にイメージ写真として自然に添えるプロンプト★
+                    # ★写真を新規スライドではなく、メモ各章のイメージ写真として添える指示★
                     single_pass_prompt = f"""
                     あなたはプレゼン資料作成のプロコンサルタントです。
                     以下の入力を直接分析し、メモの情報を一切落とさずにプレゼンスライド用のJSONを作成してください。
@@ -1085,7 +1085,7 @@ with col_btn1:
                        - "checklist": 確認事項・必要書類・チェックリスト（※全幅チェック欄）
                        - "table": タスク管理表、仕様一覧などの表組み（※全幅表）
                     3. ★写真の自然な活用ルール（最重要）★:
-                       - アップロードされた画像（合計 {len(image_contexts)} 枚）がある場合、新しい「写真紹介スライド」を勝手に作らないでください。
+                       - アップロードされた画像がある場合、新しい「写真紹介スライド」を勝手に作らないでください。
                        - メモにある内容のスライド（例えば「要因分析」「現状の課題」「今後の戦略」などの "text" スライド）に、【イメージ写真として添える形】で assigned_image_indices に割り当ててください。
                        - STEP、チェックリスト、表組み、グラフのスライドには画像を割り当てないでください。
                     4. "step" の場合:
@@ -1180,7 +1180,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 e_sub_title = st.text_input(f"補助項目 タイトル", value=ch.get("sub_title", ""), key=f"sub_t_{idx}")
                 e_sub_body = st.text_area(f"補助項目 本文", value=sanitize_text_empty_lines(ch.get("sub_body", "")), height=68, key=f"sub_b_{idx}")
 
-            # 画像選択UI（画像付きスライドまたはテキストスライドのみ）
+            # 画像選択UI（テキストスライドのみ）
             e_assigned_indices = []
             e_captions = []
             if e_layout == "text" and active_images:
@@ -1499,13 +1499,11 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     elif should_draw_chart:
                         format_chart_slide_left_column(ch_slide)
                     else:
-                        # ★P3文字サイズ改善＆画像添え対応★
                         format_text_or_image_slide_layout(ch_slide, assigned_imgs, captions)
                         if len(assigned_imgs) > 0:
                             for af in assigned_imgs:
                                 inserted_image_report.append(f"スライド {ch_page_num}（{clean_ch_title}）: 『{af['filename']}』")
 
-                    # グラフ描画（凡例非表示でスッキリ＆実数値プロット）
                     if should_draw_chart:
                         c_dict = chart_info if (isinstance(chart_info, dict) and chart_info.get("values")) else extract_chart_data_from_memo(raw_memo)
                         categories = c_dict.get("categories", ["4月", "5月", "6月", "7月", "8月", "9月"])
@@ -1535,7 +1533,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                                 chart.has_title = True
                                 chart.chart_title.text_frame.text = str(c_dict.get("title", "月別売上推移（万円）"))
 
-                                # ★凡例（売上高の巨大縦文字）を非表示にしてグラフを美しく拡大★
                                 chart.has_legend = False
 
                                 for p in chart.chart_title.text_frame.paragraphs:
@@ -1572,7 +1569,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     if s_i > 0:
                         ensure_page_number(sld, s_i)
 
-                # 6. ID・GUID重複＆孤立リレーションの完全清掃
+                # 6. ID・GUID重複＆孤立リレーションの完全パージ
                 fix_all_xml_integrity_safe(prs)
 
                 # 7. 保存
