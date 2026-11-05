@@ -54,8 +54,7 @@ st.caption("AI資料 自動生成システム")
 LAYOUT_MAP = {
     "line_chart": "折れ線グラフ（推移・トレンド）",
     "bar_chart": "棒グラフ（比較・実績）",
-    "image": "画像付き解説（画像＋テキスト）",
-    "text": "標準テキスト（文章・概要）",
+    "text": "解説スライド（文章メイン または 写真添え）",
     "step": "実行ステップ（フロー・手順図）",
     "checklist": "チェックリスト（確認項目一覧）",
     "table": "表組み（タスク・管理一覧）"
@@ -143,7 +142,6 @@ def extract_chart_data_from_memo(text):
         "values": [1200.0, 1450.0, 1380.0, 1600.0, 1850.0, 1720.0]
     }
 
-# ★第1防衛線：複製時点でGUIDとIDを完全に新品化する安全複製エンジン★
 def duplicate_slide_safe(prs, src_idx):
     src_slide = prs.slides[src_idx]
     new_slide = prs.slides.add_slide(src_slide.slide_layout)
@@ -156,7 +154,6 @@ def duplicate_slide_safe(prs, src_idx):
     rel_map = {}
     for shape in src_slide.shapes:
         new_el = copy.deepcopy(shape._element)
-        # 複製直後に creationId を書き換えて重複を根絶
         for node in new_el.iter():
             if node.tag.endswith('creationId'):
                 node.attrib['id'] = f"{{{str(uuid.uuid4()).upper()}}}"
@@ -179,52 +176,63 @@ def duplicate_slide_safe(prs, src_idx):
         spTree.append(new_el)
     return new_slide
 
+# ★テンプレート標準と同一座標・スタイルに完全統一したページ番号配置★
 def ensure_page_number(slide, page_num):
     found_shp = None
     for shp in slide.shapes:
         is_ph = (shp.is_placeholder and shp.placeholder_format.type == PP_PLACEHOLDER.SLIDE_NUMBER)
-        is_name = any(kw in shp.name.lower() for kw in ["スライド番号", "page_number", "pagenumber", "slide_number"])
+        is_name = any(kw in shp.name.lower() for kw in ["スライド番号", "slide_number"])
         if is_ph or is_name:
             found_shp = shp
             break
 
+    # テンプレート標準の正確なEMU座標（left=623.8pt, top=548.1pt, width=189.4pt, height=31.6pt）
     if found_shp and found_shp.has_text_frame:
+        found_shp.left = Pt(623.8)
+        found_shp.top = Pt(548.1)
+        found_shp.width = Pt(189.4)
+        found_shp.height = Pt(31.6)
         tf = found_shp.text_frame
         tf.word_wrap = False
+        tf.margin_left = Pt(7.2)
+        tf.margin_right = Pt(7.2)
+        tf.margin_top = Pt(3.6)
+        tf.margin_bottom = Pt(3.6)
         p = tf.paragraphs[0]
         p.text = str(page_num)
         p.alignment = PP_ALIGN.RIGHT
         p.font.name = "メイリオ"
-        p.font.size = Pt(12)
+        p.font.size = Pt(14)
         p.font.bold = True
-        p.font.color.rgb = RGBColor(0, 0, 0)
+        p.font.color.rgb = RGBColor(2, 24, 46)
     else:
-        txBox = slide.shapes.add_textbox(Pt(720), Pt(542), Pt(80), Pt(28))
+        txBox = slide.shapes.add_textbox(Pt(623.8), Pt(548.1), Pt(189.4), Pt(31.6))
         tf = txBox.text_frame
         tf.word_wrap = False
+        tf.margin_left = Pt(7.2)
+        tf.margin_right = Pt(7.2)
+        tf.margin_top = Pt(3.6)
+        tf.margin_bottom = Pt(3.6)
         p = tf.paragraphs[0]
         p.text = str(page_num)
         p.alignment = PP_ALIGN.RIGHT
         p.font.name = "メイリオ"
-        p.font.size = Pt(12)
+        p.font.size = Pt(14)
         p.font.bold = True
-        p.font.color.rgb = RGBColor(0, 0, 0)
+        p.font.color.rgb = RGBColor(2, 24, 46)
 
-# ★第2・第3防衛線：OpenXML整合性完全修復エンジン★
+# ★OpenXML整合性修復エンジン★
 def fix_all_xml_integrity_safe(prs):
     global_id = 100
     for sld in prs.slides:
         tree = sld.shapes._spTree
         for node in tree.iter():
-            # 1. cNvPr id を完全一意な連番に更新
             if node.tag.endswith('cNvPr'):
                 global_id += 1
                 node.attrib['id'] = str(global_id)
-            # 2. creationId の重複を完全に解消
             elif node.tag.endswith('creationId'):
                 node.attrib['id'] = f"{{{str(uuid.uuid4()).upper()}}}"
 
-    # 3. 削除されたスライドの孤立リレーション（幽霊リンク）を完全消去
     try:
         valid_rids = set(
             sld_id.attrib['{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id']
@@ -236,7 +244,6 @@ def fix_all_xml_integrity_safe(prs):
     except Exception:
         pass
 
-    # 4. 各スライド内の孤立リレーションも完全消去
     for sld in prs.slides:
         try:
             used_rids = set(
@@ -269,9 +276,16 @@ def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
             except Exception:
                 pass
 
+# ★スライド番号を消さずに、右半分の残骸図形だけを安全に消去★
 def wipe_right_side_shapes(slide):
     shapes_to_del = []
     for shp in slide.shapes:
+        # スライド番号プレースホルダー（Y座標 500pt 以上）は絶対に消さない
+        if shp.top > Pt(500) and shp.left > Pt(500):
+            continue
+        if shp.is_placeholder and shp.placeholder_format.type == PP_PLACEHOLDER.SLIDE_NUMBER:
+            continue
+            
         if shp.left > Pt(350):
             if shp.shape_type in [13, 14]:
                 shapes_to_del.append(shp)
@@ -279,6 +293,7 @@ def wipe_right_side_shapes(slide):
                 shapes_to_del.append(shp)
             elif shp.has_text_frame and (shp.text_frame.text.strip() == "" or "[[画像" in shp.text_frame.text or "CAPTION" in shp.name.upper()):
                 shapes_to_del.append(shp)
+
     for shp in shapes_to_del:
         try:
             sp = shp._element
@@ -292,6 +307,8 @@ def build_perfect_steps(slide, step_descs, body_text=""):
     shapes_to_del = []
     main_body_shp = None
     for shp in slide.shapes:
+        if shp.top > Pt(500) and shp.left > Pt(500):
+            continue
         sname = shp.name.upper()
         if "MAIN_BODY_TEXT" in sname:
             main_body_shp = shp
@@ -424,6 +441,8 @@ def format_checklist_slide(slide):
 
     shapes_to_del = []
     for shp in slide.shapes:
+        if shp.top > Pt(500) and shp.left > Pt(500):
+            continue
         sname = shp.name.upper()
         if "MAIN_SECTION_TITLE" in sname:
             main_title = shp
@@ -494,6 +513,7 @@ def format_checklist_slide(slide):
         outro_shape.top = int(box_shape.top + box_shape.height + Pt(14.0))
         outro_shape.width = Pt(660.0)
 
+# ★P6 表組み：空列を作らず、全幅で自動配分★
 def format_table_and_note(slide, total_width_pt=671.1):
     wipe_right_side_shapes(slide)
     tbl_shape = None
@@ -501,6 +521,8 @@ def format_table_and_note(slide, total_width_pt=671.1):
 
     shapes_to_del = []
     for shp in slide.shapes:
+        if shp.top > Pt(500) and shp.left > Pt(500):
+            continue
         if shp.has_table:
             tbl_shape = shp
         elif shp.has_text_frame and ("※" in shp.text_frame.text or "注" in shp.text_frame.text or "BODY_TEXT" in shp.name.upper()):
@@ -516,9 +538,24 @@ def format_table_and_note(slide, total_width_pt=671.1):
             pass
 
     if tbl_shape:
+        table = tbl_shape.table
         tbl_shape.left = Pt(113.7)
         tbl_shape.top = Pt(150.0)
-        for row in tbl_shape.table.rows:
+        num_cols = len(table.columns)
+
+        # 実質空の列（ヘッダー・データ共に空）があれば検出
+        valid_cols = []
+        for c in range(num_cols):
+            has_val = any(row.cells[c].text_frame.text.strip() != "" for row in table.rows)
+            if has_val:
+                valid_cols.append(c)
+
+        active_col_count = len(valid_cols) if valid_cols else num_cols
+        col_w = total_width_pt / active_col_count
+        for c in range(num_cols):
+            table.columns[c].width = int(Pt(col_w))
+
+        for row in table.rows:
             for cell in row.cells:
                 for p in cell.text_frame.paragraphs:
                     p.font.name = "メイリオ"
@@ -545,6 +582,8 @@ def format_chart_slide_left_column(slide):
     sub_body = None
 
     for shp in slide.shapes:
+        if shp.top > Pt(500) and shp.left > Pt(500):
+            continue
         sname = shp.name.upper()
         if "MAIN_SECTION_TITLE" in sname:
             main_title = shp
@@ -630,7 +669,8 @@ def format_chart_slide_left_column(slide):
                 except Exception:
                     pass
 
-def format_image_slide_layout(slide, assigned_images, captions=None):
+# ★P3 文字が小さい問題解消：写真なしなら全幅展開、写真ありなら2カラム★
+def format_text_or_image_slide_layout(slide, assigned_images, captions=None):
     main_title = None
     main_line = None
     main_body = None
@@ -639,6 +679,8 @@ def format_image_slide_layout(slide, assigned_images, captions=None):
     sub_body = None
 
     for shp in slide.shapes:
+        if shp.top > Pt(500) and shp.left > Pt(500):
+            continue
         sname = shp.name.upper()
         if "MAIN_SECTION_TITLE" in sname:
             main_title = shp
@@ -653,13 +695,18 @@ def format_image_slide_layout(slide, assigned_images, captions=None):
         elif "コネクタ" in shp.name or ("LINE" in sname and "SECTION_LINE" not in sname):
             sub_line = shp
 
+    has_image = bool(assigned_images and len(assigned_images) > 0)
+    text_width = Pt(245.0) if has_image else Pt(660.0)
+    font_size_body = Pt(11.0) if has_image else Pt(13.5)
+    font_size_sub = Pt(10.5) if has_image else Pt(12.5)
+
     curr_y = Pt(110.0)
 
     if main_title:
         main_title.left = Pt(124.6)
         main_title.top = int(curr_y)
-        main_title.width = Pt(230.0)
-        t_h = Pt(26.0)
+        main_title.width = text_width
+        t_h = Pt(28.0) if not has_image else Pt(26.0)
         main_title.height = int(t_h)
         if main_line:
             main_line.left = Pt(113.7)
@@ -669,14 +716,17 @@ def format_image_slide_layout(slide, assigned_images, captions=None):
     if main_body and main_body.has_text_frame and main_body.text_frame.text.strip():
         main_body.left = Pt(113.7)
         main_body.top = int(curr_y)
-        main_body.width = Pt(245.0)
+        main_body.width = text_width
         for p in main_body.text_frame.paragraphs:
             p.font.name = "メイリオ"
-            p.font.size = Pt(11.0)
-            p.line_spacing = 1.25
-        b_lines = len(main_body.text_frame.text.strip()) // 16 + 1
-        b_h = Pt(b_lines * 18.0)
-        curr_y += b_h + Pt(14.0)
+            p.font.size = font_size_body
+            p.line_spacing = 1.35
+            for r in p.runs:
+                r.font.name = "メイリオ"
+                r.font.size = font_size_body
+        b_lines = len(main_body.text_frame.text.strip()) // (35 if not has_image else 16) + 1
+        b_h = Pt(b_lines * 22.0) if not has_image else Pt(b_lines * 18.0)
+        curr_y += b_h + Pt(16.0)
 
     has_sub = (sub_title and sub_title.has_text_frame and sub_title.text_frame.text.strip()) or \
               (sub_body and sub_body.has_text_frame and sub_body.text_frame.text.strip())
@@ -685,19 +735,27 @@ def format_image_slide_layout(slide, assigned_images, captions=None):
         if sub_title and sub_title.has_text_frame and sub_title.text_frame.text.strip():
             sub_title.left = Pt(124.6)
             sub_title.top = int(curr_y)
-            sub_title.width = Pt(230.0)
+            sub_title.width = text_width
+            for p in sub_title.text_frame.paragraphs:
+                p.font.name = "メイリオ"
+                p.font.size = Pt(13.0) if not has_image else Pt(11.5)
+                p.font.bold = True
             if sub_line:
                 sub_line.left = Pt(113.7)
                 sub_line.top = int(curr_y + Pt(3.5))
-            curr_y += Pt(22.0)
+            curr_y += Pt(26.0)
         if sub_body and sub_body.has_text_frame and sub_body.text_frame.text.strip():
             sub_body.left = Pt(113.7)
             sub_body.top = int(curr_y)
-            sub_body.width = Pt(245.0)
+            sub_body.width = text_width
             for p in sub_body.text_frame.paragraphs:
                 p.font.name = "メイリオ"
-                p.font.size = Pt(10.5)
-                p.line_spacing = 1.2
+                p.font.size = font_size_sub
+                p.line_spacing = 1.3
+                p.space_after = Pt(4.0)
+                for r in p.runs:
+                    r.font.name = "メイリオ"
+                    r.font.size = font_size_sub
     else:
         for del_shp in [sub_line, sub_title, sub_body]:
             if del_shp:
@@ -707,7 +765,8 @@ def format_image_slide_layout(slide, assigned_images, captions=None):
                 except Exception:
                     pass
 
-    if assigned_images and len(assigned_images) > 0:
+    # 画像がある場合は右側に美麗配置
+    if has_image:
         img_bytes = assigned_images[0]["bytes"]
         pil_img = Image.open(io.BytesIO(img_bytes))
         orig_w, orig_h = pil_img.size
@@ -860,6 +919,8 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
 
     if not has_notice and not is_cover:
         for shape in slide.shapes:
+            if shape.top > Pt(500) and shape.left > Pt(500):
+                continue
             sname_u = shape.name.upper()
             raw_t = shape.text_frame.text if shape.has_text_frame else ""
             if any(kw in sname_u for kw in ["CAUTION", "SUPPLEMENT", "補足", "注意"]):
@@ -868,6 +929,8 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
                 shapes_to_remove.append(shape)
 
     for shape in slide.shapes:
+        if shape.top > Pt(500) and shape.left > Pt(500):
+            continue
         raw_text = shape.text_frame.text if shape.has_text_frame else ""
         if shape.has_text_frame:
             txt = raw_text.strip()
@@ -1005,6 +1068,7 @@ with col_btn1:
                         "image_contexts": image_contexts
                     }
 
+                    # ★メモ内容の各章にイメージ写真として自然に添えるプロンプト★
                     single_pass_prompt = f"""
                     あなたはプレゼン資料作成のプロコンサルタントです。
                     以下の入力を直接分析し、メモの情報を一切落とさずにプレゼンスライド用のJSONを作成してください。
@@ -1016,17 +1080,16 @@ with col_btn1:
                     1. メモの主要項目を整理し、プレゼンに最適な章（chapters）にまとめてください。
                     2. 各章のコンテンツに合わせて、最適な "layout_type" を選定してください:
                        - "line_chart": 売上推移などの数値変化がある場合（※画像なし）
-                       - "image": 画像を大きく表示して説明したいスライド（※画像＋テキスト解説）
-                       - "step": 導入手順・運用フロー・実行ステップ（※画像なし・全幅STEP図）
-                       - "checklist": 確認事項・必要書類・チェックリスト（※画像なし・全幅チェック欄）
-                       - "table": タスク管理表、仕様一覧などの表組み（※画像なし・全幅表）
-                       - "text": 概要・特徴・方針など
-                    3. ★画像割り当ての絶対ルール★:
-                       - アップロードされた画像が {len(image_contexts)} 枚あります。
-                       - "step", "checklist", "table", "line_chart" には画像を割り当てないでください。
-                       - アップロードされた全画像（インデックス 0〜{len(image_contexts)-1}）を1枚残らず使い切るため、画像用の章（"layout_type": "image"）を画像の枚数分だけ【新規に作成】し、それぞれの画像インデックスを assigned_image_indices に割り当ててください。
+                       - "text": 概要・特徴・方針・要因分析・課題など（※文章メイン または 右側にイメージ写真を添える）
+                       - "step": 導入手順・運用フロー・実行ステップ（※全幅STEP図）
+                       - "checklist": 確認事項・必要書類・チェックリスト（※全幅チェック欄）
+                       - "table": タスク管理表、仕様一覧などの表組み（※全幅表）
+                    3. ★写真の自然な活用ルール（最重要）★:
+                       - アップロードされた画像（合計 {len(image_contexts)} 枚）がある場合、新しい「写真紹介スライド」を勝手に作らないでください。
+                       - メモにある内容のスライド（例えば「要因分析」「現状の課題」「今後の戦略」などの "text" スライド）に、【イメージ写真として添える形】で assigned_image_indices に割り当ててください。
+                       - STEP、チェックリスト、表組み、グラフのスライドには画像を割り当てないでください。
                     4. "step" の場合:
-                       - "step_descs": メモから抽出した具体的な4つのアクションステップ文字列配列（例: ["1の施策", "2の施策", "3の施策", "4の施策"]）。
+                       - "step_descs": メモから抽出した具体的な4つのアクションステップ文字列配列。
                     5. "checklist" の場合:
                        - "checklist_intro": 導入文
                        - "checklist_items": メモから抽出した最大6つのチェック項目文字列配列
@@ -1109,7 +1172,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 current_layout_key = str(ch.get("layout_type", "text")).lower()
                 current_label = LAYOUT_MAP.get(current_layout_key, LAYOUT_MAP["text"])
                 labels_list = list(LAYOUT_MAP.values())
-                l_idx = labels_list.index(current_label) if current_label in labels_list else 3
+                l_idx = labels_list.index(current_label) if current_label in labels_list else 2
                 
                 selected_label = st.selectbox(f"レイアウトタイプ", labels_list, index=l_idx, key=f"layout_{idx}")
                 e_layout = LAYOUT_REVERSE_MAP[selected_label]
@@ -1117,26 +1180,27 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 e_sub_title = st.text_input(f"補助項目 タイトル", value=ch.get("sub_title", ""), key=f"sub_t_{idx}")
                 e_sub_body = st.text_area(f"補助項目 本文", value=sanitize_text_empty_lines(ch.get("sub_body", "")), height=68, key=f"sub_b_{idx}")
 
+            # 画像選択UI（画像付きスライドまたはテキストスライドのみ）
             e_assigned_indices = []
             e_captions = []
-            if e_layout in ["image", "text"] and active_images:
-                st.markdown("**📷 画像の挿入設定（任意）**")
-                img_options = ["（挿入しない）"] + [f"画像{i+1}: {img['filename']}" for i, img in enumerate(active_images)]
+            if e_layout == "text" and active_images:
+                st.markdown("**📷 イメージ写真の挿入設定（任意）**")
+                img_options = ["（挿入しない・文章を全幅で大きく表示）"] + [f"画像{i+1}: {img['filename']}" for i, img in enumerate(active_images)]
                 
                 ai_assigned = ch.get("assigned_image_indices", [])
                 default_sel_idx = 0
                 if ai_assigned and len(ai_assigned) > 0 and ai_assigned[0] < len(active_images):
                     default_sel_idx = ai_assigned[0] + 1
                 
-                sel_img = st.selectbox("このスライドに挿入する画像", img_options, index=default_sel_idx, key=f"img_sel_{idx}")
-                if sel_img != "（挿入しない）":
+                sel_img = st.selectbox("このスライドに添える写真", img_options, index=default_sel_idx, key=f"img_sel_{idx}")
+                if sel_img != "（挿入しない・文章を全幅で大きく表示）":
                     chosen_idx = img_options.index(sel_img) - 1
                     e_assigned_indices = [chosen_idx]
                     old_caps = ch.get("image_captions", [])
                     default_cap = old_caps[0] if (old_caps and isinstance(old_caps, list) and len(old_caps) > 0) else ""
-                    user_cap = st.text_input("画像のキャプション（任意）", value=default_cap, key=f"cap_{idx}")
+                    user_cap = st.text_input("写真のキャプション（任意）", value=default_cap, key=f"cap_{idx}")
                     e_captions = [user_cap]
-                    st.success(f"✅ このスライドの右側に 『{active_images[chosen_idx]['filename']}』 を挿入します")
+                    st.success(f"✅ このスライドの右側に 『{active_images[chosen_idx]['filename']}』 を添えます")
             else:
                 e_assigned_indices = []
                 e_captions = []
@@ -1151,10 +1215,10 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         s_descs = b_steps[:4]
                 if not isinstance(s_descs, list) or len(s_descs) < 4:
                     s_descs = [
-                        "顧客購買データの詳細分析",
-                        "高単価ターゲット層へのアプローチ強化",
-                        "新プロモーションの実施",
-                        "月商200万円の継続的維持"
+                        "月次販売実績の可視化と分析",
+                        "店舗別の成功事例共有",
+                        "顧客属性に応じた販促施策の実施",
+                        "営業スタッフ向け研修の定期開催"
                     ]
                 e_s_descs = []
                 s_cols = st.columns(2)
@@ -1192,7 +1256,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 e_c_items = ch.get("checklist_items", [])
                 c_outro_val = ch.get("checklist_outro", "")
 
-            # 3. テーブル詳細フォーム（NoneTypeガード済み）
+            # 3. テーブル詳細フォーム
             if e_layout == "table":
                 st.markdown("**📋 表組み（テーブル）データ設定**")
                 tbl_raw = ch.get("table")
@@ -1273,37 +1337,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 "chart_info": edited_c_info
             })
 
-    # 未割り当て画像を100%全件スライド化
-    if active_images:
-        assigned_indices = set()
-        for ch in edited_chapters:
-            for a_idx in ch.get("assigned_image_indices", []):
-                if isinstance(a_idx, int) and 0 <= a_idx < len(active_images):
-                    assigned_indices.add(a_idx)
-        
-        unassigned_indices = [i for i in range(len(active_images)) if i not in assigned_indices]
-        for un_i in unassigned_indices:
-            img_data = active_images[un_i]
-            img_name = img_data.get("filename", f"画像{un_i+1}")
-            img_title = os.path.splitext(img_name)[0]
-            edited_chapters.append({
-                "chapter_title": f"{img_title}の概要",
-                "layout_type": "image",
-                "main_item": f"{img_title}の活用と展開",
-                "body": f"本画像（{img_name}）に関する詳細説明および関連施策の概要です。",
-                "sub_title": "",
-                "sub_body": "",
-                "notice": "",
-                "assigned_image_indices": [un_i],
-                "image_captions": [img_title],
-                "step_descs": [],
-                "checklist_intro": "",
-                "checklist_items": [],
-                "checklist_outro": "",
-                "table": {},
-                "chart_info": {}
-            })
-
     st.markdown("---")
     
     if st.button("✨ この内容で PowerPoint 資料を自動生成する ✨", key="generate_pptx_btn", type="primary", use_container_width=True):
@@ -1379,11 +1412,11 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     if should_draw_chart:
                         target_template_idx = 2
                     elif layout_type == "checklist":
-                        target_template_idx = 9 if tpl_slide_count > 9 else 2
+                        target_template_idx = 9 if tpl_slide_count > 9 else (4 if tpl_slide_count > 4 else 2)
                     elif layout_type == "step":
-                        target_template_idx = 5 if tpl_slide_count > 5 else 2
+                        target_template_idx = 5 if tpl_slide_count > 5 else (3 if tpl_slide_count > 3 else 2)
                     elif layout_type == "table":
-                        target_template_idx = 8 if tpl_slide_count > 8 else 2
+                        target_template_idx = 8 if tpl_slide_count > 8 else (5 if tpl_slide_count > 5 else 2)
                     else:
                         target_template_idx = 2
 
@@ -1457,20 +1490,22 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         is_cover=False
                     )
 
-                    if target_template_idx == 5:
+                    if layout_type == "step":
                         build_perfect_steps(ch_slide, step_descs, body_text_val)
-                    elif target_template_idx == 9:
+                    elif layout_type == "checklist":
                         format_checklist_slide(ch_slide)
-                    elif target_template_idx in [6, 7, 8]:
+                    elif layout_type == "table":
                         format_table_and_note(ch_slide)
                     elif should_draw_chart:
                         format_chart_slide_left_column(ch_slide)
-                    elif target_template_idx == 2:
-                        format_image_slide_layout(ch_slide, assigned_imgs, captions)
+                    else:
+                        # ★P3文字サイズ改善＆画像添え対応★
+                        format_text_or_image_slide_layout(ch_slide, assigned_imgs, captions)
                         if len(assigned_imgs) > 0:
                             for af in assigned_imgs:
                                 inserted_image_report.append(f"スライド {ch_page_num}（{clean_ch_title}）: 『{af['filename']}』")
 
+                    # グラフ描画（凡例非表示でスッキリ＆実数値プロット）
                     if should_draw_chart:
                         c_dict = chart_info if (isinstance(chart_info, dict) and chart_info.get("values")) else extract_chart_data_from_memo(raw_memo)
                         categories = c_dict.get("categories", ["4月", "5月", "6月", "7月", "8月", "9月"])
@@ -1494,11 +1529,14 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
 
                             try:
                                 c_type = XL_CHART_TYPE.COLUMN_CLUSTERED if ("bar" in layout_type or "棒" in clean_ch_title) else XL_CHART_TYPE.LINE_MARKERS
-                                x_pos, y_pos, cx_pos, cy_pos = Pt(380), Pt(135), Pt(290), Pt(260)
+                                x_pos, y_pos, cx_pos, cy_pos = Pt(380), Pt(135), Pt(320), Pt(260)
                                 chart_shape = ch_slide.shapes.add_chart(c_type, x_pos, y_pos, cx_pos, cy_pos, chart_data)
                                 chart = chart_shape.chart
                                 chart.has_title = True
                                 chart.chart_title.text_frame.text = str(c_dict.get("title", "月別売上推移（万円）"))
+
+                                # ★凡例（売上高の巨大縦文字）を非表示にしてグラフを美しく拡大★
+                                chart.has_legend = False
 
                                 for p in chart.chart_title.text_frame.paragraphs:
                                     p.font.name = "メイリオ"
@@ -1534,10 +1572,10 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     if s_i > 0:
                         ensure_page_number(sld, s_i)
 
-                # ★【最重要】PowerPointの修復警告を完全根絶する整合性修正★
+                # 6. ID・GUID重複＆孤立リレーションの完全清掃
                 fix_all_xml_integrity_safe(prs)
 
-                # 6. 保存
+                # 7. 保存
                 safe_filename = re.sub(r'[/\\:*?"<>|]', '_', doc_title.strip())
                 if not safe_filename:
                     safe_filename = "提案書"
@@ -1549,7 +1587,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 st.success(f"🎉 『{safe_filename}.pptx』の自動構築が完了しました！（全 {len(prs.slides)} ページ）")
                 
                 if inserted_image_report:
-                    st.info("📷 **以下のスライドに画像を配置しました：**\n- " + "\n- ".join(inserted_image_report))
+                    st.info("📷 **以下のスライドにイメージ写真を添えました：**\n- " + "\n- ".join(inserted_image_report))
 
                 with open(output_path, "rb") as f:
                     st.download_button(
