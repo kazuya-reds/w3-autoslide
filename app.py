@@ -142,7 +142,7 @@ def extract_chart_data_from_memo(text):
         "values": [1200.0, 1450.0, 1380.0, 1600.0, 1850.0, 1720.0]
     }
 
-# ★既存チャートや不要な残骸を完全クリーンアップして複製する安全エンジン★
+# 複製直後に GUID を新品 UUID に即時置換する安全複製
 def duplicate_slide_safe(prs, src_idx):
     src_slide = prs.slides[src_idx]
     new_slide = prs.slides.add_slide(src_slide.slide_layout)
@@ -154,7 +154,6 @@ def duplicate_slide_safe(prs, src_idx):
 
     rel_map = {}
     for shape in src_slide.shapes:
-        # テンプレートに元からある古いグラフ枠は複製しない（新規描画との二重衝突を防ぐ）
         if shape.has_chart:
             continue
             
@@ -224,7 +223,7 @@ def ensure_page_number(slide, page_num):
         p.font.bold = True
         p.font.color.rgb = RGBColor(2, 24, 46)
 
-# ★OpenXML規格整合性修復エンジン★
+# OpenXML規格整合性修復エンジン
 def fix_all_xml_integrity_safe(prs):
     global_id = 100
     for sld in prs.slides:
@@ -261,21 +260,49 @@ def fix_all_xml_integrity_safe(prs):
         except Exception:
             pass
 
+# ★【最重要】グラフタイトルおよび軸ラベルを100%確実にメイリオ化するDrawingMLエンジン★
 def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
     ns_a = nsdecls("a")
+    
+    # 1. グラフタイトルの完全メイリオ化（defRPr と rPr の両方に ea と latin を注入）
     if chart.has_title and chart.chart_title.text_frame:
         for p in chart.chart_title.text_frame.paragraphs:
-            p.font.name = "メイリオ"
-            p.font.size = Pt(11)
-            for run in p.runs:
-                run.font.name = "メイリオ"
-                run.font.size = Pt(11)
+            pPr = p._p.get_or_add_pPr()
+            defRPr = pPr.get_or_add_defRPr()
+            defRPr.attrib['sz'] = '1200'
+            defRPr.attrib['b'] = '1'
+            for child in list(defRPr):
+                if child.tag.endswith('ea') or child.tag.endswith('latin'):
+                    defRPr.remove(child)
+            defRPr.append(parse_xml(f'<a:ea {ns_a} typeface="メイリオ"/>'))
+            defRPr.append(parse_xml(f'<a:latin {ns_a} typeface="Meiryo"/>'))
+            
+            for r in p.runs:
+                rPr = r._r.get_or_add_rPr()
+                rPr.attrib['sz'] = '1200'
+                rPr.attrib['b'] = '1'
+                rPr.attrib['lang'] = 'ja-JP'
+                rPr.attrib['altLang'] = 'en-US'
+                for child in list(rPr):
+                    if child.tag.endswith('ea') or child.tag.endswith('latin'):
+                        rPr.remove(child)
+                rPr.append(parse_xml(f'<a:ea {ns_a} typeface="メイリオ"/>'))
+                rPr.append(parse_xml(f'<a:latin {ns_a} typeface="Meiryo"/>'))
 
+    # 2. X軸・Y軸ラベルの完全メイリオ化
     for axis in [getattr(chart, 'category_axis', None), getattr(chart, 'value_axis', None)]:
         if axis and hasattr(axis, 'tick_labels'):
             try:
-                axis.tick_labels.font.name = "メイリオ"
-                axis.tick_labels.font.size = Pt(font_size_pt)
+                txPr = axis.tick_labels._element.get_or_add_txPr()
+                for p in txPr.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}p'):
+                    pPr = p.get_or_add_pPr()
+                    defRPr = pPr.get_or_add_defRPr()
+                    defRPr.attrib['sz'] = str(int(font_size_pt * 100))
+                    for child in list(defRPr):
+                        if child.tag.endswith('ea') or child.tag.endswith('latin'):
+                            defRPr.remove(child)
+                    defRPr.append(parse_xml(f'<a:ea {ns_a} typeface="メイリオ"/>'))
+                    defRPr.append(parse_xml(f'<a:latin {ns_a} typeface="Meiryo"/>'))
             except Exception:
                 pass
 
@@ -1340,7 +1367,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
             try:
                 current_dir = os.path.dirname(os.path.abspath(__file__))
                 
-                # ★【最重要】自己汚染バグの根絶：真正なテンプレートファイルのみを厳格に探索★
                 template_path = None
                 target_norm = unicodedata.normalize('NFC', '資料作成テンプレート_A4横.pptx')
                 
@@ -1353,7 +1379,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         break
 
                 if not template_path:
-                    # テンプレート名が見つからない場合、既存の生成ファイルを除外して探索
                     for f in os.listdir(current_dir):
                         if f.endswith('.pptx') and not any(kw in f for kw in ["報告", "提案書", "上期", "成長戦略"]):
                             template_path = os.path.join(current_dir, f)
@@ -1515,7 +1540,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                             for af in assigned_imgs:
                                 inserted_image_report.append(f"スライド {ch_page_num}（{clean_ch_title}）: 『{af['filename']}』")
 
-                    # グラフ描画（凡例非表示・実数値プロット）
+                    # グラフ描画（凡例非表示・メイリオ完全適用）
                     if should_draw_chart:
                         c_dict = chart_info if (isinstance(chart_info, dict) and chart_info.get("values")) else extract_chart_data_from_memo(raw_memo)
                         categories = c_dict.get("categories", ["4月", "5月", "6月", "7月", "8月", "9月"])
@@ -1543,13 +1568,10 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                                 chart_shape = ch_slide.shapes.add_chart(c_type, x_pos, y_pos, cx_pos, cy_pos, chart_data)
                                 chart = chart_shape.chart
                                 chart.has_title = True
-                                chart.chart_title.text_frame.text = str(c_dict.get("title", "月別売上推移（万円）"))
+                                g_title_text = str(c_dict.get("title", "月別売上推移（万円）"))
+                                chart.chart_title.text_frame.text = g_title_text
 
                                 chart.has_legend = False
-
-                                for p in chart.chart_title.text_frame.paragraphs:
-                                    p.font.name = "メイリオ"
-                                    p.font.size = Pt(11)
 
                                 for s in chart.series:
                                     s.format.line.color.rgb = RGBColor(217, 48, 37)
@@ -1562,6 +1584,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                                     except Exception:
                                         pass
 
+                                # ★ここでタイトル・軸ラベルの全日本語フォントを完全メイリオ化★
                                 force_meiryo_and_style_on_chart(chart, font_size_pt=9)
                                 chart_created = True
                             except Exception:
@@ -1584,7 +1607,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 # 6. ID・GUID重複＆孤立リレーションの完全パージ
                 fix_all_xml_integrity_safe(prs)
 
-                # ★【核心】ディスクに保存せず、メモリ上で完結させて自己汚染をゼロにする★
+                # 7. メモリ上で完結させて自己汚染をゼロにする
                 output_stream = io.BytesIO()
                 prs.save(output_stream)
                 output_stream.seek(0)
