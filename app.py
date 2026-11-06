@@ -98,12 +98,12 @@ def sanitize_main_item(main_item, clean_ch_title):
         if 2 <= len(first_part) <= 15:
             main_item = first_part
         else:
-            if "推移" in clean_ch_title or "売上" in clean_ch_title or "販売" in clean_ch_title:
+            if "推移" in clean_ch_title or "売上" in clean_ch_title:
                 main_item = "売上実績は堅調に推移"
             elif "要因" in clean_ch_title or "分析" in clean_ch_title:
                 main_item = "実績を牽引した主な要因"
-            elif "アクション" in clean_ch_title or "手順" in clean_ch_title or "戦略" in clean_ch_title or "施策" in clean_ch_title or "目標" in clean_ch_title:
-                main_item = "今後の重要目標と計画"
+            elif "アクション" in clean_ch_title or "手順" in clean_ch_title or "戦略" in clean_ch_title or "施策" in clean_ch_title:
+                main_item = "今後の重要アクション"
             elif "チェック" in clean_ch_title or "確認" in clean_ch_title or "課題" in clean_ch_title:
                 main_item = "現状の主要課題と確認事項"
             elif "表" in clean_ch_title or "タスク" in clean_ch_title or "管理" in clean_ch_title:
@@ -142,7 +142,6 @@ def extract_chart_data_from_memo(text):
         "values": [1200.0, 1450.0, 1380.0, 1600.0, 1850.0, 1720.0]
     }
 
-# 複製直後に GUID を新品 UUID に即時置換する安全複製
 def duplicate_slide_safe(prs, src_idx):
     src_slide = prs.slides[src_idx]
     new_slide = prs.slides.add_slide(src_slide.slide_layout)
@@ -154,7 +153,6 @@ def duplicate_slide_safe(prs, src_idx):
 
     rel_map = {}
     for shape in src_slide.shapes:
-        # 古いグラフ枠の複製を防ぎ多重衝突を遮断
         if shape.has_chart:
             continue
             
@@ -224,7 +222,6 @@ def ensure_page_number(slide, page_num):
         p.font.bold = True
         p.font.color.rgb = RGBColor(2, 24, 46)
 
-# OpenXML規格整合性修復エンジン
 def fix_all_xml_integrity_safe(prs):
     global_id = 100
     for sld in prs.slides:
@@ -261,10 +258,8 @@ def fix_all_xml_integrity_safe(prs):
         except Exception:
             pass
 
-# グラフタイトルおよび軸ラベルの完全メイリオ化
 def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
     ns_a = nsdecls("a")
-    
     if chart.has_title and chart.chart_title.text_frame:
         for p in chart.chart_title.text_frame.paragraphs:
             pPr = p._p.get_or_add_pPr()
@@ -694,7 +689,6 @@ def format_chart_slide_left_column(slide):
                 except Exception:
                     pass
 
-# ★【最重要】文字量に応じた適応型タイポグラフィ＆レイアウト（余白スカスカ感を完全解消）★
 def format_text_or_image_slide_layout(slide, assigned_images, captions=None):
     main_title = None
     main_line = None
@@ -727,7 +721,6 @@ def format_text_or_image_slide_layout(slide, assigned_images, captions=None):
     body_text = main_body.text_frame.text.strip() if (main_body and main_body.has_text_frame) else ""
     body_chars = len(body_text)
 
-    # 1. 写真がある場合（2カラムレイアウト）
     if has_image:
         text_width = Pt(245.0)
         curr_y = Pt(110.0)
@@ -736,8 +729,6 @@ def format_text_or_image_slide_layout(slide, assigned_images, captions=None):
         line_spacing_body = 1.3
         line_height_val = Pt(18.0)
         title_bottom_gap = Pt(12.0)
-
-    # 2. 写真なし ＆ 補助項目あり（要因分析など）
     elif has_sub:
         text_width = Pt(660.0)
         curr_y = Pt(115.0)
@@ -746,12 +737,9 @@ def format_text_or_image_slide_layout(slide, assigned_images, captions=None):
         line_spacing_body = 1.45
         line_height_val = Pt(20.0)
         title_bottom_gap = Pt(14.0)
-
-    # 3. 写真なし ＆ 補助項目なし（まとめ、方針などのメッセージスライド：動的スケーリング）
     else:
         text_width = Pt(660.0)
         if body_chars < 120:
-            # 超短文（「08 まとめ」など）：上下中央にゆったり大きく配置
             curr_y = Pt(155.0)
             font_size_main = Pt(22.0)
             font_size_body = Pt(16.5)
@@ -759,7 +747,6 @@ def format_text_or_image_slide_layout(slide, assigned_images, captions=None):
             line_height_val = Pt(26.0)
             title_bottom_gap = Pt(24.0)
         elif body_chars < 220:
-            # 中程度
             curr_y = Pt(135.0)
             font_size_main = Pt(20.0)
             font_size_body = Pt(15.0)
@@ -767,7 +754,6 @@ def format_text_or_image_slide_layout(slide, assigned_images, captions=None):
             line_height_val = Pt(22.0)
             title_bottom_gap = Pt(20.0)
         else:
-            # 長文
             curr_y = Pt(115.0)
             font_size_main = Pt(18.0)
             font_size_body = Pt(13.5)
@@ -775,7 +761,6 @@ def format_text_or_image_slide_layout(slide, assigned_images, captions=None):
             line_height_val = Pt(18.0)
             title_bottom_gap = Pt(14.0)
 
-    # 主要見出しの配置
     if main_title:
         main_title.left = Pt(124.6)
         main_title.top = int(curr_y)
@@ -797,7 +782,6 @@ def format_text_or_image_slide_layout(slide, assigned_images, captions=None):
             main_line.width = Pt(4.5)
         curr_y += t_h + title_bottom_gap
 
-    # 本文の配置
     if main_body and main_body.has_text_frame and body_text:
         main_body.left = Pt(113.7)
         main_body.top = int(curr_y)
@@ -815,7 +799,6 @@ def format_text_or_image_slide_layout(slide, assigned_images, captions=None):
         b_h = Pt(b_lines * (24.0 if font_size_body >= Pt(16.0) else 20.0))
         curr_y += b_h + Pt(16.0)
 
-    # 補助項目の配置
     if has_sub:
         if sub_title and sub_title.has_text_frame and sub_title.text_frame.text.strip():
             sub_title.left = Pt(124.6)
@@ -850,7 +833,6 @@ def format_text_or_image_slide_layout(slide, assigned_images, captions=None):
                 except Exception:
                     pass
 
-    # 画像の配置（写真がある場合）
     if has_image:
         img_bytes = assigned_images[0]["bytes"]
         pil_img = Image.open(io.BytesIO(img_bytes))
@@ -1155,7 +1137,7 @@ with col_btn1:
 
                     single_pass_prompt = f"""
                     あなたはプレゼン資料作成のプロコンサルタントです。
-                    以下の入力を直接分析し、メモの情報を一切落さずにプレゼンスライド用のJSONを作成してください。
+                    以下の入力を直接分析し、メモの情報を一切落とさずにプレゼンスライド用のJSONを作成してください。
 
                     【入力データ】
                     {json.dumps(prompt_data, ensure_ascii=False, indent=2)}
@@ -1368,7 +1350,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
             else:
                 e_table = ch.get("table") if isinstance(ch.get("table"), dict) else {}
 
-            # 4. グラフ設定フォーム（各スライド個別のグラフデータを設定可能）
+            # 4. グラフ設定フォーム
             c_info = ch.get("chart_info")
             if not isinstance(c_info, dict) or not c_info.get("values"):
                 c_info = extract_chart_data_from_memo(raw_memo)
@@ -1427,7 +1409,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
             try:
                 current_dir = os.path.dirname(os.path.abspath(__file__))
                 
-                # 真正なテンプレートファイルのみを厳格に探索
                 template_path = None
                 target_norm = unicodedata.normalize('NFC', '資料作成テンプレート_A4横.pptx')
                 
@@ -1496,24 +1477,20 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     img_indices = ch.get("assigned_image_indices", [])
                     assigned_imgs = [active_images[i] for i in img_indices if i < len(active_images)]
                     captions = ch.get("image_captions", [])
-
                     chart_info = ch.get("chart_info")
-                    is_chart_keyword = any(kw in clean_ch_title for kw in ["推移", "売上", "実績", "販売", "比較", "グラフ", "データ", "目標"])
 
-                    # ★【重要修正】何枚目であってもグラフ指定スライドは確実に描画（1枚限定バグを根絶）★
-                    should_draw_chart = (
-                        "line" in layout_type or "bar" in layout_type or "chart" in layout_type or
-                        (is_chart_keyword and isinstance(chart_info, dict) and bool(chart_info.get("values")))
-                    )
+                    # ★【最重要修正】ユーザー指定の layout_type を絶対尊守（勝手なグラフ誤判定を完全根絶）★
+                    should_draw_chart = (layout_type in ["line_chart", "bar_chart"])
 
-                    if should_draw_chart:
-                        target_template_idx = 2
+                    # テンプレート割り当て
+                    if layout_type == "step":
+                        target_template_idx = 5 if tpl_slide_count > 5 else (3 if tpl_slide_count > 3 else 2)
                     elif layout_type == "checklist":
                         target_template_idx = 9 if tpl_slide_count > 9 else (4 if tpl_slide_count > 4 else 2)
-                    elif layout_type == "step":
-                        target_template_idx = 5 if tpl_slide_count > 5 else (3 if tpl_slide_count > 3 else 2)
                     elif layout_type == "table":
                         target_template_idx = 8 if tpl_slide_count > 8 else (5 if tpl_slide_count > 5 else 2)
+                    elif should_draw_chart:
+                        target_template_idx = 2
                     else:
                         target_template_idx = 2
 
@@ -1587,6 +1564,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         is_cover=False
                     )
 
+                    # ★レイアウト別の完全排他制御（STEPスライドへのグラフ混入を遮断）★
                     if layout_type == "step":
                         build_perfect_steps(ch_slide, step_descs, body_text_val)
                     elif layout_type == "checklist":
@@ -1596,18 +1574,16 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     elif should_draw_chart:
                         format_chart_slide_left_column(ch_slide)
                     else:
-                        # ★適応型タイポグラフィ＆レイアウト（まとめスライド等の余白を美しく調整）★
                         format_text_or_image_slide_layout(ch_slide, assigned_imgs, captions)
                         if len(assigned_imgs) > 0:
                             for af in assigned_imgs:
                                 inserted_image_report.append(f"スライド {ch_page_num}（{clean_ch_title}）: 『{af['filename']}』")
 
-                    # ★複数スライド対応グラフ描画（P2、P8など何枚でも固有データで描画）★
-                    if should_draw_chart:
-                        c_dict = chart_info if (isinstance(chart_info, dict) and chart_info.get("values")) else extract_chart_data_from_memo(raw_memo)
-                        categories = c_dict.get("categories", ["4月", "5月", "6月", "7月", "8月", "9月"])
-                        series_name = str(c_dict.get("series_name") or c_dict.get("title") or "推移")
-                        raw_values = c_dict.get("values", [1200.0, 1450.0, 1380.0, 1600.0, 1850.0, 1720.0])
+                    # ★グラフ描画：should_draw_chart（折れ線・棒グラフ指定）の場合のみ実行★
+                    if should_draw_chart and isinstance(chart_info, dict):
+                        categories = chart_info.get("categories", ["4月", "5月", "6月", "7月", "8月", "9月"])
+                        series_name = str(chart_info.get("series_name") or chart_info.get("title") or "推移")
+                        raw_values = chart_info.get("values", [1200.0, 1450.0, 1380.0, 1600.0, 1850.0, 1720.0])
 
                         values = []
                         if isinstance(raw_values, list):
@@ -1630,7 +1606,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                                 chart_shape = ch_slide.shapes.add_chart(c_type, x_pos, y_pos, cx_pos, cy_pos, chart_data)
                                 chart = chart_shape.chart
                                 chart.has_title = True
-                                chart.chart_title.text_frame.text = str(c_dict.get("title", f"{clean_ch_title}の推移"))
+                                chart.chart_title.text_frame.text = str(chart_info.get("title", f"{clean_ch_title}の推移"))
 
                                 chart.has_legend = False
 
@@ -1645,9 +1621,8 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                                     except Exception:
                                         pass
 
-                                # タイトル・軸ラベルの完全メイリオ化
                                 force_meiryo_and_style_on_chart(chart, font_size_pt=9)
-                            except Exception as e:
+                            except Exception:
                                 pass
 
                 # 4. テンプレート元スライドの完全消去
