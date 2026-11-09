@@ -6,7 +6,7 @@ from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 from pptx.chart.data import CategoryChartData
 from pptx.enum.shapes import PP_PLACEHOLDER
-from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
+from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION, XL_DATA_LABEL_POSITION
 from pptx.oxml import parse_xml
 from pptx.oxml.ns import nsdecls
 from PIL import Image
@@ -51,7 +51,6 @@ st.markdown("""
 st.image("logo.png", width=350)
 st.caption("AI資料 自動生成システム")
 
-# ★円グラフ（pie_chart）をフォーマットに追加★
 LAYOUT_MAP = {
     "line_chart": "折れ線グラフ（推移・トレンド）",
     "bar_chart": "棒グラフ（比較・実績）",
@@ -93,7 +92,6 @@ def sanitize_text_empty_lines(text):
     if not text: return ""
     return re.sub(r'\n{2,}', '\n', str(text).strip())
 
-# ★STEPテキストの先頭にある①②や1.などの重複番号記号を自動消去するサニタイザー★
 def clean_step_text(text):
     if not text:
         return ""
@@ -269,7 +267,7 @@ def fix_all_xml_integrity_safe(prs):
         except Exception:
             pass
 
-# ★円グラフ・折れ線・棒グラフ共通のフォント設定（軸の有無を安全判定）★
+# ★【改善】円グラフの白抜き文字＆全グラフのメイリオ化エンジン★
 def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
     ns_a = nsdecls("a")
     
@@ -298,7 +296,7 @@ def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
                 rPr.append(parse_xml(f'<a:ea {ns_a} typeface="メイリオ"/>'))
                 rPr.append(parse_xml(f'<a:latin {ns_a} typeface="Meiryo"/>'))
 
-    # 2. 凡例の完全メイリオ化（円グラフ等）
+    # 2. 凡例の完全メイリオ化
     if chart.has_legend and chart.legend:
         try:
             txPr = chart.legend._element.get_or_add_txPr()
@@ -314,18 +312,27 @@ def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
         except Exception:
             pass
 
-    # 3. データラベルの完全メイリオ化（円グラフのパーセント数値等）
+    # ★3. 円グラフのデータラベル（白抜き文字・太字・メイリオ）★
     try:
         if hasattr(chart.plots[0], 'has_data_labels') and chart.plots[0].has_data_labels:
             txPr = chart.plots[0].data_labels._element.get_or_add_txPr()
-            for p in txPr.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}p'):
+            p_list = txPr.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}p')
+            if not p_list:
+                p = parse_xml(f'<a:p {ns_a}><a:pPr/></a:p>')
+                txPr.append(p)
+                p_list = [p]
+                
+            for p in p_list:
                 pPr = p.get_or_add_pPr()
                 defRPr = pPr.get_or_add_defRPr()
-                defRPr.attrib['sz'] = str(int(font_size_pt * 100))
-                defRPr.attrib['b'] = '1'
+                defRPr.attrib['sz'] = '1100'  # 11pt
+                defRPr.attrib['b'] = '1'       # 太字
                 for child in list(defRPr):
-                    if child.tag.endswith('ea') or child.tag.endswith('latin'):
+                    tag_name = child.tag.split('}')[-1]
+                    if tag_name in ['solidFill', 'ea', 'latin']:
                         defRPr.remove(child)
+                # 白文字（白抜き）
+                defRPr.append(parse_xml(f'<a:solidFill {ns_a}><a:srgbClr val="FFFFFF"/></a:solidFill>'))
                 defRPr.append(parse_xml(f'<a:ea {ns_a} typeface="メイリオ"/>'))
                 defRPr.append(parse_xml(f'<a:latin {ns_a} typeface="Meiryo"/>'))
     except Exception:
@@ -400,7 +407,6 @@ def insert_slide_picture_safe(slide, assigned_images, captions=None, max_w_pt=35
         p.font.name = "メイリオ"
         p.font.color.rgb = RGBColor(120, 120, 120)
 
-# ★STEPスライド構築（①②…の重複番号自動除去済み）★
 def build_perfect_steps(slide, step_descs, body_text="", assigned_images=None, captions=None):
     wipe_right_side_shapes(slide)
     has_image = bool(assigned_images and len(assigned_images) > 0)
@@ -507,7 +513,6 @@ def build_perfect_steps(slide, step_descs, body_text="", assigned_images=None, c
                 tf = t_shp.text_frame
                 tf.word_wrap = True
                 raw_desc = step_descs[k - 1] if len(step_descs) >= k else f"アクション {k}"
-                # ★ここで先頭の①②や1.を確実に除去★
                 tf.text = clean_step_text(raw_desc)
                 tf.vertical_anchor = MSO_ANCHOR.MIDDLE
                 for p in tf.paragraphs:
@@ -1232,7 +1237,7 @@ with col_btn1:
                     3. ★写真の自然な活用ルール★:
                        - 写真紹介専用スライドを勝手に作らず、メモにある内容（例えば「要因分析」「現状の課題」など）にイメージ写真として添えてください。
                     4. "step" の場合:
-                       - "step_descs": メモから抽出した具体的な4つのアクションステップ文字列配列。※先頭に「①」「②」「1.」「STEP 1」などの番号記号は付けないでください。
+                       - "step_descs": メモから抽出した具体的な4つのアクションステップ文字列配列。※先頭に「①」「②」「1.」「STEP 1」などの番号記号は絶対に付けないでください。
                     5. "checklist" の場合:
                        - "checklist_intro": 導入文
                        - "checklist_items": メモから抽出した最大6つのチェック項目文字列配列
@@ -1325,7 +1330,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 e_sub_title = st.text_input(f"補助項目 タイトル", value=ch.get("sub_title", ""), key=f"sub_t_{idx}")
                 e_sub_body = st.text_area(f"補助項目 本文", value=sanitize_text_empty_lines(ch.get("sub_body", "")), height=68, key=f"sub_b_{idx}")
 
-            # ★全スライドで画像選択可能★
             e_assigned_indices = []
             e_captions = []
             if active_images:
@@ -1369,7 +1373,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 s_cols = st.columns(2)
                 for s_i in range(4):
                     default_s = s_descs[s_i] if len(s_descs) > s_i else f"アクション {s_i+1}"
-                    # ★初期表示時にもクレンジングを適用して重複除去★
                     clean_default = clean_step_text(default_s)
                     with s_cols[s_i % 2]:
                         val_s = st.text_input(f"STEP {s_i+1}", value=clean_default, key=f"step_{idx}_{s_i}")
@@ -1433,7 +1436,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
             else:
                 e_table = ch.get("table") if isinstance(ch.get("table"), dict) else {}
 
-            # 4. グラフ設定フォーム（★円グラフ・棒・折れ線に対応★）
+            # 4. グラフ設定フォーム（円グラフ・棒・折れ線に対応）
             c_info = ch.get("chart_info")
             if not isinstance(c_info, dict) or not c_info.get("values"):
                 c_info = extract_chart_data_from_memo(raw_memo)
@@ -1572,7 +1575,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     captions = ch.get("image_captions", [])
                     chart_info = ch.get("chart_info")
 
-                    # ★グラフ判定：折れ線・棒・円グラフのいずれかが指定された場合★
+                    # グラフ判定（折れ線・棒・円グラフ）
                     should_draw_chart = (layout_type in ["line_chart", "bar_chart", "pie_chart"])
 
                     # テンプレート割り当て
@@ -1657,7 +1660,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         is_cover=False
                     )
 
-                    # ★レイアウト別の整形（STEPはサニタイズされたテキストで美麗配置）★
                     if layout_type == "step":
                         build_perfect_steps(ch_slide, step_descs, body_text_val, assigned_imgs, captions)
                     elif layout_type == "checklist":
@@ -1679,7 +1681,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         g_title_raw = str(chart_info.get("title") or f"{clean_ch_title}")
                         g_unit = str(chart_info.get("unit") or "").strip()
 
-                        # 単位の自動付与（重複を防ぎつつ追加）
                         if g_unit and f"（{g_unit}）" not in g_title_raw and f"({g_unit})" not in g_title_raw:
                             g_title_text = f"{g_title_raw}（{g_unit}）"
                         else:
@@ -1722,16 +1723,17 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                                 chart.has_title = True
                                 chart.chart_title.text_frame.text = g_title_text
 
-                                # ★1. 円グラフのスタイリング★
+                                # ★1. 円グラフのスタイリング（イメージ図通りの6色＆白抜き文字）★
                                 if is_pie:
                                     pie_palette = [
-                                        RGBColor(217, 48, 37),   # メインレッド
-                                        RGBColor(234, 102, 60),  # コーラル
-                                        RGBColor(242, 147, 89),  # サーモンオレンジ
-                                        RGBColor(246, 189, 96),  # ウォームイエロー
-                                        RGBColor(140, 150, 160), # ニュートラルスレート
-                                        RGBColor(100, 110, 120), # ダークスレート
-                                        RGBColor(80, 130, 180),  # スレートブルー
+                                        RGBColor(217, 48, 37),   # 1. 赤 (Red)
+                                        RGBColor(235, 122, 25),  # 2. オレンジ (Orange)
+                                        RGBColor(98, 178, 44),   # 3. グリーン (Green)
+                                        RGBColor(65, 126, 186),  # 4. ブルー (Blue)
+                                        RGBColor(138, 79, 148),  # 5. パープル (Purple)
+                                        RGBColor(78, 78, 78),    # 6. ダークグレー (Dark Grey)
+                                        RGBColor(246, 189, 96),  # 7. ウォームイエロー
+                                        RGBColor(140, 150, 160), # 8. ライトスレート
                                     ]
                                     series = chart.series[0]
                                     for p_i, pt in enumerate(series.points):
@@ -1746,12 +1748,20 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                                     data_labels.show_percentage = True
                                     data_labels.show_value = False
                                     data_labels.show_category_name = False
+                                    data_labels.position = XL_DATA_LABEL_POSITION.BEST_FIT
+
+                                    # 白抜き文字指定
+                                    if hasattr(data_labels, 'font'):
+                                        data_labels.font.color.rgb = RGBColor(255, 255, 255)
+                                        data_labels.font.bold = True
+                                        data_labels.font.name = "メイリオ"
+                                        data_labels.font.size = Pt(11)
 
                                     chart.has_legend = True
                                     chart.legend.position = XL_LEGEND_POSITION.RIGHT
                                     chart.legend.include_in_layout = False
 
-                                # ★2. 棒グラフのスタイリング（赤色統一 ＆ Y軸％表示）★
+                                # ★2. 棒グラフのスタイリング（赤色統一＆Y軸％表示）★
                                 elif is_bar:
                                     chart.has_legend = False
                                     plot = chart.plots[0]
@@ -1834,7 +1844,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 st.success(f"🎉 『{download_filename}』の自動構築が完了しました！（全 {len(prs.slides)} ページ）")
                 
                 if inserted_image_report:
-                    st.info("📷 **以下のスライドに画像を配置しました：**\n- " + "\n- ".join(inserted_image_report))
+                    st.info("📷 **以下のスライドにイメージ写真を添えました：**\n- " + "\n- ".join(inserted_image_report))
 
                 st.download_button(
                     label=f"📥 『{download_filename}』をダウンロード",
