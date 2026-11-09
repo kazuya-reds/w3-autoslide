@@ -6,7 +6,7 @@ from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 from pptx.chart.data import CategoryChartData
 from pptx.enum.shapes import PP_PLACEHOLDER
-from pptx.enum.chart import XL_CHART_TYPE
+from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
 from pptx.oxml import parse_xml
 from pptx.oxml.ns import nsdecls
 from PIL import Image
@@ -51,9 +51,11 @@ st.markdown("""
 st.image("logo.png", width=350)
 st.caption("AI資料 自動生成システム")
 
+# ★円グラフ（pie_chart）をフォーマットに追加★
 LAYOUT_MAP = {
     "line_chart": "折れ線グラフ（推移・トレンド）",
     "bar_chart": "棒グラフ（比較・実績）",
+    "pie_chart": "円グラフ（構成比・内訳）",
     "text": "解説スライド（文章メイン または 写真添え）",
     "step": "実行ステップ（フロー・手順図）",
     "checklist": "チェックリスト（確認項目一覧）",
@@ -91,6 +93,13 @@ def sanitize_text_empty_lines(text):
     if not text: return ""
     return re.sub(r'\n{2,}', '\n', str(text).strip())
 
+# ★STEPテキストの先頭にある①②や1.などの重複番号記号を自動消去するサニタイザー★
+def clean_step_text(text):
+    if not text:
+        return ""
+    cleaned = re.sub(r'^(?:[①-⑳]|\(?\d+[\.\)）]\s*|(?:STEP|Step|step|ステップ)\s*\d+[\:\s・]*|[・\-\*]\s*)+', '', str(text).strip())
+    return cleaned.strip()
+
 def sanitize_main_item(main_item, clean_ch_title):
     main_item = str(main_item).strip() if main_item else ""
     if not main_item or len(main_item) > 18 or "。" in main_item or "、" in main_item:
@@ -100,7 +109,7 @@ def sanitize_main_item(main_item, clean_ch_title):
         else:
             if "推移" in clean_ch_title or "売上" in clean_ch_title:
                 main_item = "売上実績は堅調に推移"
-            elif "要因" in clean_ch_title or "分析" in clean_ch_title or "顧客" in clean_ch_title:
+            elif "要因" in clean_ch_title or "分析" in clean_ch_title or "顧客" in clean_ch_title or "構成" in clean_ch_title:
                 main_item = "分析結果の主要ポイント"
             elif "アクション" in clean_ch_title or "手順" in clean_ch_title or "戦略" in clean_ch_title or "施策" in clean_ch_title or "目標" in clean_ch_title:
                 main_item = "今後の重要施策と計画"
@@ -260,8 +269,11 @@ def fix_all_xml_integrity_safe(prs):
         except Exception:
             pass
 
+# ★円グラフ・折れ線・棒グラフ共通のフォント設定（軸の有無を安全判定）★
 def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
     ns_a = nsdecls("a")
+    
+    # 1. グラフタイトルの完全メイリオ化
     if chart.has_title and chart.chart_title.text_frame:
         for p in chart.chart_title.text_frame.paragraphs:
             pPr = p._p.get_or_add_pPr()
@@ -286,9 +298,44 @@ def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
                 rPr.append(parse_xml(f'<a:ea {ns_a} typeface="メイリオ"/>'))
                 rPr.append(parse_xml(f'<a:latin {ns_a} typeface="Meiryo"/>'))
 
-    for axis in [getattr(chart, 'category_axis', None), getattr(chart, 'value_axis', None)]:
-        if axis and hasattr(axis, 'tick_labels'):
-            try:
+    # 2. 凡例の完全メイリオ化（円グラフ等）
+    if chart.has_legend and chart.legend:
+        try:
+            txPr = chart.legend._element.get_or_add_txPr()
+            for p in txPr.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}p'):
+                pPr = p.get_or_add_pPr()
+                defRPr = pPr.get_or_add_defRPr()
+                defRPr.attrib['sz'] = str(int(font_size_pt * 100))
+                for child in list(defRPr):
+                    if child.tag.endswith('ea') or child.tag.endswith('latin'):
+                        defRPr.remove(child)
+                defRPr.append(parse_xml(f'<a:ea {ns_a} typeface="メイリオ"/>'))
+                defRPr.append(parse_xml(f'<a:latin {ns_a} typeface="Meiryo"/>'))
+        except Exception:
+            pass
+
+    # 3. データラベルの完全メイリオ化（円グラフのパーセント数値等）
+    try:
+        if hasattr(chart.plots[0], 'has_data_labels') and chart.plots[0].has_data_labels:
+            txPr = chart.plots[0].data_labels._element.get_or_add_txPr()
+            for p in txPr.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}p'):
+                pPr = p.get_or_add_pPr()
+                defRPr = pPr.get_or_add_defRPr()
+                defRPr.attrib['sz'] = str(int(font_size_pt * 100))
+                defRPr.attrib['b'] = '1'
+                for child in list(defRPr):
+                    if child.tag.endswith('ea') or child.tag.endswith('latin'):
+                        defRPr.remove(child)
+                defRPr.append(parse_xml(f'<a:ea {ns_a} typeface="メイリオ"/>'))
+                defRPr.append(parse_xml(f'<a:latin {ns_a} typeface="Meiryo"/>'))
+    except Exception:
+        pass
+
+    # 4. 軸のフォント（折れ線・棒グラフのみ。円グラフのエラーを安全に回避）
+    for axis_name in ['category_axis', 'value_axis']:
+        try:
+            axis = getattr(chart, axis_name)
+            if axis and hasattr(axis, 'tick_labels'):
                 txPr = axis.tick_labels._element.get_or_add_txPr()
                 for p in txPr.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}p'):
                     pPr = p.get_or_add_pPr()
@@ -299,8 +346,8 @@ def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
                             defRPr.remove(child)
                     defRPr.append(parse_xml(f'<a:ea {ns_a} typeface="メイリオ"/>'))
                     defRPr.append(parse_xml(f'<a:latin {ns_a} typeface="Meiryo"/>'))
-            except Exception:
-                pass
+        except (ValueError, AttributeError):
+            pass
 
 def wipe_right_side_shapes(slide):
     shapes_to_del = []
@@ -325,7 +372,6 @@ def wipe_right_side_shapes(slide):
         except Exception:
             pass
 
-# ★全スライドで安全に画像を右側配置できる共通関数★
 def insert_slide_picture_safe(slide, assigned_images, captions=None, max_w_pt=350, max_h_pt=280, left_pt=420, top_pt=140):
     if not assigned_images or len(assigned_images) == 0:
         return
@@ -354,7 +400,7 @@ def insert_slide_picture_safe(slide, assigned_images, captions=None, max_w_pt=35
         p.font.name = "メイリオ"
         p.font.color.rgb = RGBColor(120, 120, 120)
 
-# ★画像あり／なし両対応のSTEPスライド構築★
+# ★STEPスライド構築（①②…の重複番号自動除去済み）★
 def build_perfect_steps(slide, step_descs, body_text="", assigned_images=None, captions=None):
     wipe_right_side_shapes(slide)
     has_image = bool(assigned_images and len(assigned_images) > 0)
@@ -460,7 +506,9 @@ def build_perfect_steps(slide, step_descs, body_text="", assigned_images=None, c
             if t_shp.has_text_frame:
                 tf = t_shp.text_frame
                 tf.word_wrap = True
-                tf.text = step_descs[k - 1] if len(step_descs) >= k else f"アクション {k}"
+                raw_desc = step_descs[k - 1] if len(step_descs) >= k else f"アクション {k}"
+                # ★ここで先頭の①②や1.を確実に除去★
+                tf.text = clean_step_text(raw_desc)
                 tf.vertical_anchor = MSO_ANCHOR.MIDDLE
                 for p in tf.paragraphs:
                     p.font.size = font_size_step
@@ -492,7 +540,6 @@ def build_perfect_steps(slide, step_descs, body_text="", assigned_images=None, c
     if has_image:
         insert_slide_picture_safe(slide, assigned_images, captions, max_w_pt=340, max_h_pt=270, left_pt=420, top_pt=145)
 
-# ★画像あり／なし両対応のチェックリスト構築★
 def format_checklist_slide(slide, assigned_images=None, captions=None):
     wipe_right_side_shapes(slide)
     has_image = bool(assigned_images and len(assigned_images) > 0)
@@ -582,7 +629,6 @@ def format_checklist_slide(slide, assigned_images=None, captions=None):
     if has_image:
         insert_slide_picture_safe(slide, assigned_images, captions, max_w_pt=340, max_h_pt=270, left_pt=430, top_pt=145)
 
-# ★画像あり／なし両対応の表組み構築★
 def format_table_and_note(slide, total_width_pt=671.1, assigned_images=None, captions=None):
     wipe_right_side_shapes(slide)
     has_image = bool(assigned_images and len(assigned_images) > 0)
@@ -743,7 +789,6 @@ def format_chart_slide_left_column(slide):
                 except Exception:
                     pass
 
-# 適応型タイポグラフィ＆レイアウト
 def format_text_or_image_slide_layout(slide, assigned_images, captions=None):
     main_title = None
     main_line = None
@@ -1178,7 +1223,8 @@ with col_btn1:
                     1. メモの主要項目を整理し、プレゼンに最適な章（chapters）にまとめてください。
                     2. 各章のコンテンツに合わせて、最適な "layout_type" を選定してください:
                        - "line_chart": 月別推移や目標推移などの数値変化がある場合（※画像なし）
-                       - "bar_chart": 年代構成や項目別比率などの比較がある場合（※画像なし）
+                       - "bar_chart": 複数項目の数量比較や実績比較がある場合（※画像なし）
+                       - "pie_chart": 年代構成、割合、シェア、内訳比率など（合計100%になるデータ）がある場合（※画像なし）
                        - "text": 概要・特徴・方針・要因分析・課題・まとめなど（※文章メイン または 右側にイメージ写真を添える）
                        - "step": 導入手順・運用フロー・実行ステップ
                        - "checklist": 確認事項・必要書類・チェックリスト
@@ -1186,7 +1232,7 @@ with col_btn1:
                     3. ★写真の自然な活用ルール★:
                        - 写真紹介専用スライドを勝手に作らず、メモにある内容（例えば「要因分析」「現状の課題」など）にイメージ写真として添えてください。
                     4. "step" の場合:
-                       - "step_descs": メモから抽出した具体的な4つのアクションステップ文字列配列。
+                       - "step_descs": メモから抽出した具体的な4つのアクションステップ文字列配列。※先頭に「①」「②」「1.」「STEP 1」などの番号記号は付けないでください。
                     5. "checklist" の場合:
                        - "checklist_intro": 導入文
                        - "checklist_items": メモから抽出した最大6つのチェック項目文字列配列
@@ -1227,7 +1273,7 @@ with col_btn1:
                             "note": "※注記文"
                           }},
                           "chart_info": {{
-                            "title": "年代構成",
+                            "title": "購入者の年代構成比率",
                             "unit": "％",
                             "categories": ["20代", "30代", "40代", "50代", "60代以上"],
                             "series_name": "年代構成比率",
@@ -1271,7 +1317,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 current_layout_key = str(ch.get("layout_type", "text")).lower()
                 current_label = LAYOUT_MAP.get(current_layout_key, LAYOUT_MAP["text"])
                 labels_list = list(LAYOUT_MAP.values())
-                l_idx = labels_list.index(current_label) if current_label in labels_list else 2
+                l_idx = labels_list.index(current_label) if current_label in labels_list else 3
                 
                 selected_label = st.selectbox(f"レイアウトタイプ", labels_list, index=l_idx, key=f"layout_{idx}")
                 e_layout = LAYOUT_REVERSE_MAP[selected_label]
@@ -1279,7 +1325,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 e_sub_title = st.text_input(f"補助項目 タイトル", value=ch.get("sub_title", ""), key=f"sub_t_{idx}")
                 e_sub_body = st.text_area(f"補助項目 本文", value=sanitize_text_empty_lines(ch.get("sub_body", "")), height=68, key=f"sub_b_{idx}")
 
-            # ★【改善】全スライドで画像選択可能★
+            # ★全スライドで画像選択可能★
             e_assigned_indices = []
             e_captions = []
             if active_images:
@@ -1304,7 +1350,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 e_assigned_indices = []
                 e_captions = []
 
-            # 1. STEP詳細フォーム
+            # 1. STEP詳細フォーム（①②の自動クレンジング適用）
             if e_layout == "step":
                 st.markdown("**ステップ詳細（最大4ステップ）**")
                 s_descs = ch.get("step_descs", [])
@@ -1314,20 +1360,22 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         s_descs = b_steps[:4]
                 if not isinstance(s_descs, list) or len(s_descs) < 4:
                     s_descs = [
-                        "月次販売実績の可視化と分析",
-                        "店舗別の成功事例共有",
-                        "顧客属性に応じた販促施策の実施",
-                        "営業スタッフ向け研修の定期開催"
+                        "顧客購買データの詳細分析",
+                        "高単価ターゲット層へのアプローチ強化",
+                        "新プロモーションの実施",
+                        "月商200万円の継続的維持"
                     ]
                 e_s_descs = []
                 s_cols = st.columns(2)
                 for s_i in range(4):
                     default_s = s_descs[s_i] if len(s_descs) > s_i else f"アクション {s_i+1}"
+                    # ★初期表示時にもクレンジングを適用して重複除去★
+                    clean_default = clean_step_text(default_s)
                     with s_cols[s_i % 2]:
-                        val_s = st.text_input(f"STEP {s_i+1}", value=default_s, key=f"step_{idx}_{s_i}")
-                        e_s_descs.append(val_s if val_s else f"ステップ {s_i+1}")
+                        val_s = st.text_input(f"STEP {s_i+1}", value=clean_default, key=f"step_{idx}_{s_i}")
+                        e_s_descs.append(clean_step_text(val_s) if val_s else f"ステップ {s_i+1}")
             else:
-                e_s_descs = ch.get("step_descs", [])
+                e_s_descs = [clean_step_text(t) for t in ch.get("step_descs", [])]
 
             # 2. チェックリスト詳細フォーム
             if e_layout == "checklist":
@@ -1385,12 +1433,12 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
             else:
                 e_table = ch.get("table") if isinstance(ch.get("table"), dict) else {}
 
-            # 4. グラフ設定フォーム（★単位入力枠を追加★）
+            # 4. グラフ設定フォーム（★円グラフ・棒・折れ線に対応★）
             c_info = ch.get("chart_info")
             if not isinstance(c_info, dict) or not c_info.get("values"):
                 c_info = extract_chart_data_from_memo(raw_memo)
 
-            if e_layout in ["line_chart", "bar_chart"]:
+            if e_layout in ["line_chart", "bar_chart", "pie_chart"]:
                 st.markdown("**📊 グラフデータ設定**")
                 g_cols = st.columns([3, 2, 3, 3])
                 with g_cols[0]:
@@ -1398,15 +1446,16 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 with g_cols[1]:
                     def_unit = c_info.get("unit", "")
                     if not def_unit:
-                        if any(kw in e_title or kw in e_body for kw in ["％", "%", "比率", "割合", "構成"]):
+                        if e_layout == "pie_chart" or any(kw in e_title or kw in e_body for kw in ["％", "%", "比率", "割合", "構成"]):
                             def_unit = "％"
                         elif any(kw in e_title or kw in e_body for kw in ["万", "円", "売上"]):
                             def_unit = "万円"
                     g_unit = st.text_input("単位（％, 万円, 個など）", value=def_unit, key=f"gu_{idx}")
                 with g_cols[2]:
-                    g_cats_str = st.text_input("カテゴリ（カンマ区切り）", value=",".join(map(str, c_info.get("categories", ["4月","5月","6月","7月","8月","9月"]))), key=f"gc_{idx}")
+                    g_cats_str = st.text_input("カテゴリ（カンマ区切り）", value=",".join(map(str, c_info.get("categories", ["20代","30代","40代","50代","60代以上"] if e_layout == "pie_chart" else ["4月","5月","6月","7月","8月","9月"]))), key=f"gc_{idx}")
                 with g_cols[3]:
-                    clean_vals = [str(v).replace(',', '') for v in c_info.get("values", [1200, 1450, 1380, 1600, 1850, 1720])]
+                    def_vals = c_info.get("values", [15, 25, 30, 20, 10] if e_layout == "pie_chart" else [1200, 1450, 1380, 1600, 1850, 1720])
+                    clean_vals = [str(v).replace(',', '') for v in def_vals]
                     g_vals_str = st.text_input("数値データ（カンマ区切り）", value=",".join(clean_vals), key=f"gv_{idx}")
 
                 cats_list = [c.strip() for c in g_cats_str.split(",") if c.strip()]
@@ -1523,8 +1572,8 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     captions = ch.get("image_captions", [])
                     chart_info = ch.get("chart_info")
 
-                    # ユーザー指定の layout_type を絶対尊守
-                    should_draw_chart = (layout_type in ["line_chart", "bar_chart"])
+                    # ★グラフ判定：折れ線・棒・円グラフのいずれかが指定された場合★
+                    should_draw_chart = (layout_type in ["line_chart", "bar_chart", "pie_chart"])
 
                     # テンプレート割り当て
                     if layout_type == "step":
@@ -1570,8 +1619,8 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                             "営業スタッフ向け研修の定期開催"
                         ]
                     for idx_s in range(1, 5):
-                        desc_s = step_descs[idx_s - 1] if len(step_descs) >= idx_s else ""
-                        ch_map[f"[[STEP{idx_s}の説明]]"] = desc_s
+                        raw_desc_s = step_descs[idx_s - 1] if len(step_descs) >= idx_s else ""
+                        ch_map[f"[[STEP{idx_s}の説明]]"] = clean_step_text(raw_desc_s)
 
                     c_intro = ch.get("checklist_intro", "施策実行における重要確認事項です。")
                     c_outro = ch.get("checklist_outro", "全項目の確認完了後、各担当部門にて施策を進行してください。")
@@ -1608,7 +1657,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         is_cover=False
                     )
 
-                    # ★レイアウト別の整形（画像あり／なし両対応）★
+                    # ★レイアウト別の整形（STEPはサニタイズされたテキストで美麗配置）★
                     if layout_type == "step":
                         build_perfect_steps(ch_slide, step_descs, body_text_val, assigned_imgs, captions)
                     elif layout_type == "checklist":
@@ -1624,13 +1673,13 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         for af in assigned_imgs:
                             inserted_image_report.append(f"スライド {ch_page_num}（{clean_ch_title}）: 『{af['filename']}』")
 
-                    # ★【重要】グラフ描画（棒グラフの赤統一＆Y軸パーセント表示）★
+                    # ★グラフ描画：円グラフ・棒グラフ・折れ線グラフ★
                     if should_draw_chart and isinstance(chart_info, dict):
                         categories = chart_info.get("categories", ["4月", "5月", "6月", "7月", "8月", "9月"])
                         g_title_raw = str(chart_info.get("title") or f"{clean_ch_title}")
                         g_unit = str(chart_info.get("unit") or "").strip()
 
-                        # タイトルへの単位自動付与
+                        # 単位の自動付与（重複を防ぎつつ追加）
                         if g_unit and f"（{g_unit}）" not in g_title_raw and f"({g_unit})" not in g_title_raw:
                             g_title_text = f"{g_title_raw}（{g_unit}）"
                         else:
@@ -1655,34 +1704,64 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                             chart_data.add_series(series_name, values[:min_len])
 
                             try:
+                                is_pie = ("pie" in layout_type or "円" in clean_ch_title)
                                 is_bar = ("bar" in layout_type or "棒" in clean_ch_title)
-                                c_type = XL_CHART_TYPE.COLUMN_CLUSTERED if is_bar else XL_CHART_TYPE.LINE_MARKERS
-                                x_pos, y_pos, cx_pos, cy_pos = Pt(380), Pt(135), Pt(320), Pt(260)
+
+                                if is_pie:
+                                    c_type = XL_CHART_TYPE.PIE
+                                    x_pos, y_pos, cx_pos, cy_pos = Pt(380), Pt(130), Pt(340), Pt(270)
+                                elif is_bar:
+                                    c_type = XL_CHART_TYPE.COLUMN_CLUSTERED
+                                    x_pos, y_pos, cx_pos, cy_pos = Pt(380), Pt(135), Pt(320), Pt(260)
+                                else:
+                                    c_type = XL_CHART_TYPE.LINE_MARKERS
+                                    x_pos, y_pos, cx_pos, cy_pos = Pt(380), Pt(135), Pt(320), Pt(260)
+
                                 chart_shape = ch_slide.shapes.add_chart(c_type, x_pos, y_pos, cx_pos, cy_pos, chart_data)
                                 chart = chart_shape.chart
                                 chart.has_title = True
                                 chart.chart_title.text_frame.text = g_title_text
-                                chart.has_legend = False
 
-                                # ★【改善1】棒グラフの赤色統一（マルチカラーを完全解除）★
-                                plot = chart.plots[0]
-                                if hasattr(plot, 'vary_by_categories'):
-                                    plot.vary_by_categories = False
+                                # ★1. 円グラフのスタイリング★
+                                if is_pie:
+                                    pie_palette = [
+                                        RGBColor(217, 48, 37),   # メインレッド
+                                        RGBColor(234, 102, 60),  # コーラル
+                                        RGBColor(242, 147, 89),  # サーモンオレンジ
+                                        RGBColor(246, 189, 96),  # ウォームイエロー
+                                        RGBColor(140, 150, 160), # ニュートラルスレート
+                                        RGBColor(100, 110, 120), # ダークスレート
+                                        RGBColor(80, 130, 180),  # スレートブルー
+                                    ]
+                                    series = chart.series[0]
+                                    for p_i, pt in enumerate(series.points):
+                                        pt.format.fill.solid()
+                                        pt.format.fill.fore_color.rgb = pie_palette[p_i % len(pie_palette)]
+                                        pt.format.line.color.rgb = RGBColor(255, 255, 255)
+                                        pt.format.line.width = Pt(1.5)
 
-                                for s in chart.series:
-                                    s.format.fill.solid()
-                                    s.format.fill.fore_color.rgb = RGBColor(217, 48, 37)
-                                    s.format.line.color.rgb = RGBColor(217, 48, 37)
-                                    if not is_bar:
-                                        s.format.line.width = Pt(2.5)
-                                        try:
-                                            if hasattr(s, 'marker'):
-                                                s.marker.format.fill.solid()
-                                                s.marker.format.fill.fore_color.rgb = RGBColor(217, 48, 37)
-                                                s.marker.format.line.color.rgb = RGBColor(217, 48, 37)
-                                        except Exception:
-                                            pass
-                                    else:
+                                    plot = chart.plots[0]
+                                    plot.has_data_labels = True
+                                    data_labels = plot.data_labels
+                                    data_labels.show_percentage = True
+                                    data_labels.show_value = False
+                                    data_labels.show_category_name = False
+
+                                    chart.has_legend = True
+                                    chart.legend.position = XL_LEGEND_POSITION.RIGHT
+                                    chart.legend.include_in_layout = False
+
+                                # ★2. 棒グラフのスタイリング（赤色統一 ＆ Y軸％表示）★
+                                elif is_bar:
+                                    chart.has_legend = False
+                                    plot = chart.plots[0]
+                                    if hasattr(plot, 'vary_by_categories'):
+                                        plot.vary_by_categories = False
+
+                                    for s in chart.series:
+                                        s.format.fill.solid()
+                                        s.format.fill.fore_color.rgb = RGBColor(217, 48, 37)
+                                        s.format.line.color.rgb = RGBColor(217, 48, 37)
                                         try:
                                             for point in s.points:
                                                 point.format.fill.solid()
@@ -1691,14 +1770,35 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                                         except Exception:
                                             pass
 
-                                # ★【改善2】Y軸の数値に % を表示★
-                                val_ax = getattr(chart, 'value_axis', None)
-                                if val_ax and hasattr(val_ax, 'tick_labels'):
-                                    is_percent_data = (g_unit in ["％", "%"] or "％" in g_title_text or "%" in g_title_text or any(kw in clean_ch_title for kw in ["比率", "割合", "構成"]))
-                                    if is_percent_data:
-                                        val_ax.tick_labels.number_format = '0"%"'
-                                        val_ax.tick_labels.number_format_is_linked = False
+                                    val_ax = getattr(chart, 'value_axis', None)
+                                    if val_ax and hasattr(val_ax, 'tick_labels'):
+                                        is_percent_data = (g_unit in ["％", "%"] or "％" in g_title_text or "%" in g_title_text or any(kw in clean_ch_title for kw in ["比率", "割合", "構成"]))
+                                        if is_percent_data:
+                                            val_ax.tick_labels.number_format = '0"%"'
+                                            val_ax.tick_labels.number_format_is_linked = False
 
+                                # ★3. 折れ線グラフのスタイリング★
+                                else:
+                                    chart.has_legend = False
+                                    for s in chart.series:
+                                        s.format.line.color.rgb = RGBColor(217, 48, 37)
+                                        s.format.line.width = Pt(2.5)
+                                        try:
+                                            if hasattr(s, 'marker'):
+                                                s.marker.format.fill.solid()
+                                                s.marker.format.fill.fore_color.rgb = RGBColor(217, 48, 37)
+                                                s.marker.format.line.color.rgb = RGBColor(217, 48, 37)
+                                        except Exception:
+                                            pass
+
+                                    val_ax = getattr(chart, 'value_axis', None)
+                                    if val_ax and hasattr(val_ax, 'tick_labels'):
+                                        is_percent_data = (g_unit in ["％", "%"] or "％" in g_title_text or "%" in g_title_text or any(kw in clean_ch_title for kw in ["比率", "割合", "構成"]))
+                                        if is_percent_data:
+                                            val_ax.tick_labels.number_format = '0"%"'
+                                            val_ax.tick_labels.number_format_is_linked = False
+
+                                # 全グラフ共通フォント設定
                                 force_meiryo_and_style_on_chart(chart, font_size_pt=9)
                             except Exception:
                                 pass
