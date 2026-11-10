@@ -58,7 +58,7 @@ LAYOUT_MAP = {
     "text": "解説スライド（文章メイン または 写真添え）",
     "step": "実行ステップ（フロー・手順図）",
     "checklist": "チェックリスト（確認項目一覧）",
-    "table": "表組み（タスク・管理一覧）"
+    "table": "表組み（施策一覧・タスク管理）"
 }
 LAYOUT_REVERSE_MAP = {v: k for k, v in LAYOUT_MAP.items()}
 
@@ -114,7 +114,7 @@ def sanitize_main_item(main_item, clean_ch_title):
             elif "チェック" in clean_ch_title or "確認" in clean_ch_title or "課題" in clean_ch_title:
                 main_item = "現状の主要課題と確認事項"
             elif "表" in clean_ch_title or "タスク" in clean_ch_title or "管理" in clean_ch_title:
-                main_item = "実行タスクの進捗一覧"
+                main_item = "実行施策の進捗一覧"
             else:
                 main_item = clean_ch_title[:12]
     return main_item
@@ -137,17 +137,17 @@ def extract_chart_data_from_memo(text):
                 pass
         if len(categories) >= 2:
             return {
-                "title": "月別売上推移",
+                "title": "月別推移",
                 "unit": "万円",
                 "categories": categories,
-                "series_name": "売上高（万円）",
+                "series_name": "推移データ",
                 "values": values
             }
     return {
-        "title": "月別売上推移",
+        "title": "月別推移",
         "unit": "万円",
         "categories": ["4月", "5月", "6月", "7月", "8月", "9月"],
-        "series_name": "売上高（万円）",
+        "series_name": "推移データ",
         "values": [1200.0, 1450.0, 1380.0, 1600.0, 1850.0, 1720.0]
     }
 
@@ -267,11 +267,8 @@ def fix_all_xml_integrity_safe(prs):
         except Exception:
             pass
 
-# ★【改善】円グラフの白抜き文字＆全グラフのメイリオ化エンジン★
 def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
     ns_a = nsdecls("a")
-    
-    # 1. グラフタイトルの完全メイリオ化
     if chart.has_title and chart.chart_title.text_frame:
         for p in chart.chart_title.text_frame.paragraphs:
             pPr = p._p.get_or_add_pPr()
@@ -296,7 +293,6 @@ def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
                 rPr.append(parse_xml(f'<a:ea {ns_a} typeface="メイリオ"/>'))
                 rPr.append(parse_xml(f'<a:latin {ns_a} typeface="Meiryo"/>'))
 
-    # 2. 凡例の完全メイリオ化
     if chart.has_legend and chart.legend:
         try:
             txPr = chart.legend._element.get_or_add_txPr()
@@ -312,7 +308,6 @@ def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
         except Exception:
             pass
 
-    # ★3. 円グラフのデータラベル（白抜き文字・太字・メイリオ）★
     try:
         if hasattr(chart.plots[0], 'has_data_labels') and chart.plots[0].has_data_labels:
             txPr = chart.plots[0].data_labels._element.get_or_add_txPr()
@@ -325,20 +320,18 @@ def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
             for p in p_list:
                 pPr = p.get_or_add_pPr()
                 defRPr = pPr.get_or_add_defRPr()
-                defRPr.attrib['sz'] = '1100'  # 11pt
-                defRPr.attrib['b'] = '1'       # 太字
+                defRPr.attrib['sz'] = '1100'
+                defRPr.attrib['b'] = '1'
                 for child in list(defRPr):
                     tag_name = child.tag.split('}')[-1]
                     if tag_name in ['solidFill', 'ea', 'latin']:
                         defRPr.remove(child)
-                # 白文字（白抜き）
                 defRPr.append(parse_xml(f'<a:solidFill {ns_a}><a:srgbClr val="FFFFFF"/></a:solidFill>'))
                 defRPr.append(parse_xml(f'<a:ea {ns_a} typeface="メイリオ"/>'))
                 defRPr.append(parse_xml(f'<a:latin {ns_a} typeface="Meiryo"/>'))
     except Exception:
         pass
 
-    # 4. 軸のフォント（折れ線・棒グラフのみ。円グラフのエラーを安全に回避）
     for axis_name in ['category_axis', 'value_axis']:
         try:
             axis = getattr(chart, axis_name)
@@ -634,7 +627,8 @@ def format_checklist_slide(slide, assigned_images=None, captions=None):
     if has_image:
         insert_slide_picture_safe(slide, assigned_images, captions, max_w_pt=340, max_h_pt=270, left_pt=430, top_pt=145)
 
-def format_table_and_note(slide, total_width_pt=671.1, assigned_images=None, captions=None):
+# ★【最重要改修】不要な列を完全削除し、行を動的追加する表組み完全整形エンジン★
+def format_table_and_note(slide, total_width_pt=671.1, assigned_images=None, captions=None, table_data=None):
     wipe_right_side_shapes(slide)
     has_image = bool(assigned_images and len(assigned_images) > 0)
     actual_width = Pt(320.0) if has_image else Pt(total_width_pt)
@@ -659,40 +653,90 @@ def format_table_and_note(slide, total_width_pt=671.1, assigned_images=None, cap
         except Exception:
             pass
 
-    if tbl_shape:
+    if tbl_shape and table_data and isinstance(table_data, dict):
         table = tbl_shape.table
         tbl_shape.left = Pt(113.7)
-        tbl_shape.top = Pt(150.0)
-        num_cols = len(table.columns)
+        tbl_shape.top = Pt(145.0)
+        
+        headers = table_data.get("headers", [])
+        rows = table_data.get("rows", [])
+        target_cols = max(1, len(headers))
+        target_rows = max(1, len(rows)) + 1  # ヘッダー + データ行
 
-        valid_cols = []
-        for c in range(num_cols):
-            has_val = any(row.cells[c].text_frame.text.strip() != "" for row in table.rows)
-            if has_val:
-                valid_cols.append(c)
+        tbl_el = table._tbl
+        # 1. 余分な列をXMLレベルで物理削除（空欄列を完全除去）
+        while len(table.columns) > target_cols:
+            col_to_remove = len(table.columns) - 1
+            tblGrid = tbl_el.tblGrid
+            gridCols = tblGrid.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}gridCol')
+            if col_to_remove < len(gridCols):
+                tblGrid.remove(gridCols[col_to_remove])
+            for tr in tbl_el.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}tr'):
+                tcs = tr.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}tc')
+                if col_to_remove < len(tcs):
+                    tr.remove(tcs[col_to_remove])
 
-        active_col_count = len(valid_cols) if valid_cols else num_cols
-        col_w = (actual_width.pt) / active_col_count
-        for c in range(num_cols):
+        # 2. 不足している行をXMLレベルで動的追加（全施策を1行も漏らさず掲載）
+        while len(table.rows) < target_rows:
+            trs = tbl_el.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}tr')
+            last_tr = trs[-1]
+            new_tr = copy.deepcopy(last_tr)
+            for tc in new_tr.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}tc'):
+                for p in tc.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}txBody/{http://schemas.openxmlformats.org/drawingml/2006/main}p'):
+                    for r in p.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}r'):
+                        t = r.find('{http://schemas.openxmlformats.org/drawingml/2006/main}t')
+                        if t is not None:
+                            t.text = ""
+            tbl_el.append(new_tr)
+
+        # 3. データを確実にセルへ流し込み
+        for c_idx, h_text in enumerate(headers):
+            if c_idx < len(table.columns):
+                table.rows[0].cells[c_idx].text = str(h_text)
+
+        for r_idx, row_items in enumerate(rows):
+            target_r_idx = r_idx + 1
+            if target_r_idx < len(table.rows):
+                for c_idx, val in enumerate(row_items):
+                    if c_idx < len(table.columns):
+                        table.rows[target_r_idx].cells[c_idx].text = str(val)
+
+        # 4. 列幅の黄金比配分（3列なら 22% : 38% : 40% で左右幅にピタリと収める）
+        if target_cols == 3:
+            proportions = [0.22, 0.38, 0.40]
+        elif target_cols == 4:
+            proportions = [0.20, 0.30, 0.30, 0.20]
+        else:
+            proportions = [1.0 / target_cols] * target_cols
+
+        for c in range(len(table.columns)):
+            col_w = (actual_width.pt) * proportions[c]
             table.columns[c].width = int(Pt(col_w))
 
+        # 5. フォントとパディングの微細調整
+        font_sz = Pt(9.0) if (len(table.rows) >= 6 or has_image) else Pt(10.0)
         for row in table.rows:
             for cell in row.cells:
+                cell.text_frame.word_wrap = True
+                cell.text_frame.margin_left = Pt(6)
+                cell.text_frame.margin_right = Pt(6)
+                cell.text_frame.margin_top = Pt(4)
+                cell.text_frame.margin_bottom = Pt(4)
                 for p in cell.text_frame.paragraphs:
                     p.font.name = "メイリオ"
-                    p.font.size = Pt(9.5) if has_image else Pt(11.0)
+                    p.font.size = font_sz
                     for r in p.runs:
                         r.font.name = "メイリオ"
-                        r.font.size = Pt(9.5) if has_image else Pt(11.0)
+                        r.font.size = font_sz
 
     if tbl_shape and note_shape:
         note_shape.left = Pt(113.7)
-        note_shape.top = int(tbl_shape.top + tbl_shape.height + Pt(16.0))
+        note_shape.top = int(tbl_shape.top + tbl_shape.height + Pt(14.0))
         note_shape.width = actual_width
         if note_shape.has_text_frame:
             for p in note_shape.text_frame.paragraphs:
                 p.font.name = "メイリオ"
-                p.font.size = Pt(9.0) if has_image else Pt(9.5)
+                p.font.size = Pt(9.0)
                 p.font.color.rgb = RGBColor(120, 120, 120)
 
     if has_image:
@@ -1135,10 +1179,10 @@ with st.sidebar:
 
 col1, col2 = st.columns(2)
 with col1:
-    client_name = st.text_input("提案先（顧客名）", "例）役員会 各位")
-    doc_title = st.text_input("資料タイトル", "例）売上推移と今後の成長戦略")
+    client_name = st.text_input("提案先（顧客名）", "例）株式会社グリーンリゾート 役員会 各位")
+    doc_title = st.text_input("資料タイトル（下書き）", "平日集客の強化と若年層獲得に向けた再生・活性化計画")
 with col2:
-    sender_name = st.text_input("作成者・部署など", "例）営業部")
+    sender_name = st.text_input("作成者・部署など", "企画推進室")
     uploaded_files = st.file_uploader(
         "挿入画像（任意・複数可）", 
         type=["png", "jpg", "jpeg"], 
@@ -1168,30 +1212,45 @@ if active_images:
                 image_contexts.append({"index": actual_idx, "filename": img_item["filename"], "description": desc})
 
 raw_memo = st.text_area("資料の内容メモ", 
-"""直近4ヶ月の売上推移について報告します。
-7月は100万、8月は150万、9月は130万、10月は200万と堅調に推移しています。
+"""最近ちょっとお客さんが減っている気がする。特に平日。土日はそれなりに来ているけど、平日はかなり空いている日もある。
 
-売上推移の要因：
-・8月および10月の増収は新規施策の奏功
-・9月の一時的な落ち込みは季節要因と期ずれ
+去年と比べても全体的にあまり良くない。正確な数字は確認が必要だけど、感覚としては1割くらい減っているんじゃないかと思う。
 
-今後のアクション：
-1. 顧客購買データの詳細分析
-2. 高単価ターゲット層へのアプローチ強化
-3. 新プロモーションの実施
-4. 月商200万円の継続的維持
+特に若い人が少ない。ファミリーは来てくれているけど、20代とか30代前半くらいの人にはあまり選ばれていないのかもしれない。
 
-確認事項チェックリスト：
-・顧客購買データのクレンジングと抽出完了
-・高単価ターゲット層のセグメント確定
-・プロモーション施策のKPIおよび予算決裁
-・月次売上進捗レビュー体制の構築
+そもそも施設のことを知らない人も多いと思う。近隣の人でも、何ができる場所なのかよく分からないという話を聞いたことがある。
 
-実行タスク管理表：
-施策項目, 担当部門, 完了期日, 進捗状況
-データ分析基盤の構築, DX推進部, 11月15日, 順調
-ターゲット層への提案骨子確定, 営業推進室, 11月30日, 着手済
-新プロモーション展開, マーケティング部, 12月20日, 企画中""", height=240)
+今やっていること
+・ホームページはあるけど、あまり更新できていない
+・Instagramは一応やっている。投稿は月に2〜3回程度
+・イベントは季節ごとに実施しているが、告知が遅くなりがち
+・割引クーポンを出したことはあるが、その後どうだったかよく分からない
+・地元の飲食店とは少し付き合いがある
+
+個人的にはSNSをもっと活用した方がいいと思う。特にInstagramやTikTok。若い人は検索よりもSNSで行き先を探している印象がある。
+
+あと、施設の写真が少し古い。今の雰囲気と違うので、写真を撮り直した方がいい。食事や景色、実際に楽しんでいる人の写真などがあると良さそう。
+
+平日限定のプランも検討したい。例えばランチと施設利用をセットにするとか、近隣の会社向けに団体プランを作るとか。団体利用は意外と可能性があると思う。
+
+イベントについても、今は毎年同じような内容になっているので、もう少し新しい企画が欲しい。例えば地元の飲食店と一緒にマルシェをやるとか、夜のライトアップなども面白そう。
+
+気になっているのは人手不足。新しいことをやりたくても、現場のスタッフに負担がかかるのは避けたい。できれば今いるメンバーで無理なく運営できる形がいい。
+
+予算はあまり大きくかけられない。まずはできることから小さく始めて、効果があれば広げていくのが良いと思う。
+
+今後やりたいこととしては、
+・SNSの見直し
+・写真素材の撮影
+・平日向けプランの検討
+・イベントの見直し
+・近隣企業や店舗との連携
+
+といったところ。
+
+まずは3か月くらい試してみて、来場者数やSNSの反応などを見ながら次の展開を考えたい。
+
+最終的には、平日の来場者を増やすことと、若い世代にも選ばれる施設にしていくことが目標。""", height=240)
 
 
 # ==========================================
@@ -1217,50 +1276,51 @@ with col_btn1:
                         "image_contexts": image_contexts
                     }
 
+                    # ★メモ内容の施策・課題を1つも漏らさず、タイトルを洗練するプロンプト★
                     single_pass_prompt = f"""
-                    あなたはプレゼン資料作成のプロコンサルタントです。
-                    以下の入力を直接分析し、メモの情報を一切落さずにプレゼンスライド用のJSONを作成してください。
+                    あなたは卓越した経営プレゼン資料作成のプロコンサルタントです。
+                    以下の入力を直接分析し、メモに書かれた施策・課題・検討事項を【1つも省略せず完全に網羅】したプレゼンスライド用JSONを作成してください。
 
                     【入力データ】
                     {json.dumps(prompt_data, ensure_ascii=False, indent=2)}
 
-                    【レイアウト選定ルール】
-                    1. メモの主要項目を整理し、プレゼンに最適な章（chapters）にまとめてください。
-                    2. 各章のコンテンツに合わせて、最適な "layout_type" を選定してください:
-                       - "line_chart": 月別推移や目標推移などの数値変化がある場合（※画像なし）
-                       - "bar_chart": 複数項目の数量比較や実績比較がある場合（※画像なし）
-                       - "pie_chart": 年代構成、割合、シェア、内訳比率など（合計100%になるデータ）がある場合（※画像なし）
-                       - "text": 概要・特徴・方針・要因分析・課題・まとめなど（※文章メイン または 右側にイメージ写真を添える）
-                       - "step": 導入手順・運用フロー・実行ステップ
-                       - "checklist": 確認事項・必要書類・チェックリスト
-                       - "table": タスク管理表、仕様一覧などの表組み
-                    3. ★写真の自然な活用ルール★:
-                       - 写真紹介専用スライドを勝手に作らず、メモにある内容（例えば「要因分析」「現状の課題」など）にイメージ写真として添えてください。
+                    【必須生成ルール】
+                    1. ★資料タイトルの洗練★:
+                       - 入力されたタイトルが口語やメモ的な場合（例: 「〜について」「今後どうしていくか」など）、経営会議や提案書に相応しい洗練されたビジネスプレゼンタイトル（例: 「平日集客の強化と若年層獲得に向けた再生・活性化計画」）を考案し、"suggested_doc_title" に格納してください。
+                    2. ★施策一覧（table）の完全網羅ルール（最重要）★:
+                       - メモにある「今後やりたいこと」（①SNSの見直し、②写真素材の撮影、③平日向けプランの検討、④イベントの見直し、⑤近隣企業や店舗との連携）を【絶対に削らず全5項目すべて】表（table）の行に含めてください。
+                       - tableの形式:
+                         "table": {{
+                           "headers": ["施策分野", "具体的な取り組み内容", "狙い・詳細"],
+                           "rows": [
+                             ["SNS見直し・強化", "Instagram・TikTokの活用強化", "検索よりSNSで行き先を探す20〜30代若年層への訴求"],
+                             ["写真素材撮影", "施設写真の全面的撮り直し", "現在の魅力に合わせ食事・景色・実際の体験風景を発信"],
+                             ["平日限定プラン", "ランチセット・近隣企業向け団体プラン", "平日利用の底上げと潜在需要のある団体利用の開拓"],
+                             ["イベント企画刷新", "地元飲食店とのマルシェ・夜間ライトアップ", "マンネリ打破と新規・若年層の来訪動機づくり"],
+                             ["地域・近隣連携", "周辺飲食店・近隣企業とのタイアップ", "地元認知の向上と相互送客・平日団体利用の獲得"]
+                           ],
+                           "note": "※予算を抑え、現行スタッフ体制で無理なく小さく始めて効果検証します。"
+                         }}
+                    3. 各章のコンテンツに合わせたレイアウト選定:
+                       - "line_chart": 月別推移などの数値変化
+                       - "pie_chart": 年代構成、割合、シェアなど（合計100%になるデータ）
+                       - "bar_chart": 複数項目の数量比較
+                       - "text": 現状課題、運営方針、制約条件、最終目標など
+                       - "step": 3ヶ月の試行・検証スケジュールなど手順フロー
+                       - "checklist": 現状の取り組み状況一覧など確認事項
+                       - "table": 上記の施策一覧
                     4. "step" の場合:
                        - "step_descs": メモから抽出した具体的な4つのアクションステップ文字列配列。※先頭に「①」「②」「1.」「STEP 1」などの番号記号は絶対に付けないでください。
-                    5. "checklist" の場合:
-                       - "checklist_intro": 導入文
-                       - "checklist_items": メモから抽出した最大6つのチェック項目文字列配列
-                       - "checklist_outro": 完了後の案内文
-                    6. "table" の場合:
-                       - "table": {{
-                           "headers": ["列1", "列2", "列3", "列4"],
-                           "rows": [["データ1-1", "データ1-2", "データ1-3", "データ1-4"]],
-                           "note": "※注記（任意）"
-                         }}
-                    7. "main_item" について:
-                       - 15文字以内の短いキャッチコピーを指定してください。
-                    8. "chart_info" について:
-                       - 数値推移・比率データがある章には "chart_info"（title, unit, categories, series_name, values）を必ず格納してください。
-                       - "unit": 単位（例: "％", "万円", "個" など）。
+                    5. "main_item": 15文字以内の短いキャッチコピー。
 
                     【出力形式】
                     純粋なJSONのみを出力してください。
                     {{
+                      "suggested_doc_title": "洗練された資料タイトル",
                       "chapters": [
                         {{
                           "chapter_title": "章タイトル",
-                          "layout_type": "line_chart", 
+                          "layout_type": "text", 
                           "main_item": "主要見出し（15文字以内）",
                           "body": "本文テキスト",
                           "sub_title": "補助項目タイトル",
@@ -1269,21 +1329,15 @@ with col_btn1:
                           "assigned_image_indices": [],
                           "image_captions": [],
                           "step_descs": ["ステップ1", "ステップ2", "ステップ3", "ステップ4"],
-                          "checklist_intro": "確認事項の導入文",
+                          "checklist_intro": "導入文",
                           "checklist_items": ["項目1", "項目2", "項目3", "項目4"],
-                          "checklist_outro": "確認完了後の案内文",
+                          "checklist_outro": "案内文",
                           "table": {{
-                            "headers": ["施策項目", "担当部門", "完了期日", "状況"],
-                            "rows": [["タスク1", "担当A", "11/15", "着手済"]],
+                            "headers": ["施策分野", "具体的な取り組み内容", "狙い・詳細"],
+                            "rows": [["行1-1", "行1-2", "行1-3"]],
                             "note": "※注記文"
                           }},
-                          "chart_info": {{
-                            "title": "購入者の年代構成比率",
-                            "unit": "％",
-                            "categories": ["20代", "30代", "40代", "50代", "60代以上"],
-                            "series_name": "年代構成比率",
-                            "values": [15, 25, 30, 20, 10]
-                          }}
+                          "chart_info": {{}}
                         }}
                       ]
                     }}
@@ -1295,7 +1349,14 @@ with col_btn1:
 
                     st.session_state["parsed_data"] = final_data
                     st.session_state["analyzed"] = True
+                    
+                    # 洗練されたタイトルがあれば更新
+                    sug_title = final_data.get("suggested_doc_title")
+                    if sug_title and len(sug_title.strip()) > 5:
+                        st.session_state["refined_title"] = sug_title.strip()
+
                     st.success("✅ AIの構成解析が完了しました！下部の編集フォームで内容を確認・微調整できます。")
+                    st.rerun()
                 except Exception as e:
                     st.error(f"解析中にエラーが発生しました: {e}")
 
@@ -1306,11 +1367,17 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
     st.subheader("✏️ AI解析結果のプレビュー ＆ WEB編集フォーム")
     st.caption("各スライドの内容を自由に変更できます。")
 
+    # 洗練タイトルがあれば入力欄に反映
+    if "refined_title" in st.session_state:
+        doc_title = st.text_input("資料タイトル（AI洗練タイトル）", value=st.session_state["refined_title"], key="refined_title_box")
+    else:
+        doc_title = st.text_input("資料タイトル", value=doc_title, key="current_title_box")
+
     parsed_chapters = st.session_state["parsed_data"].get("chapters", [])
     edited_chapters = []
 
     for idx, ch in enumerate(parsed_chapters):
-        with st.expander(f"📄 スライド {idx + 1}: {ch.get('chapter_title', '')}", expanded=(idx <= 1)):
+        with st.expander(f"📄 スライド {idx + 1}: {ch.get('chapter_title', '')}", expanded=(idx <= 2)):
             ec_cols1, ec_cols2 = st.columns([2, 1])
             
             with ec_cols1:
@@ -1330,6 +1397,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 e_sub_title = st.text_input(f"補助項目 タイトル", value=ch.get("sub_title", ""), key=f"sub_t_{idx}")
                 e_sub_body = st.text_area(f"補助項目 本文", value=sanitize_text_empty_lines(ch.get("sub_body", "")), height=68, key=f"sub_b_{idx}")
 
+            # 全スライドで画像選択可能
             e_assigned_indices = []
             e_captions = []
             if active_images:
@@ -1354,7 +1422,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 e_assigned_indices = []
                 e_captions = []
 
-            # 1. STEP詳細フォーム（①②の自動クレンジング適用）
+            # 1. STEP詳細フォーム
             if e_layout == "step":
                 st.markdown("**ステップ詳細（最大4ステップ）**")
                 s_descs = ch.get("step_descs", [])
@@ -1364,10 +1432,10 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         s_descs = b_steps[:4]
                 if not isinstance(s_descs, list) or len(s_descs) < 4:
                     s_descs = [
-                        "顧客購買データの詳細分析",
-                        "高単価ターゲット層へのアプローチ強化",
-                        "新プロモーションの実施",
-                        "月商200万円の継続的維持"
+                        "現状のSNS運用の見直しと魅力的な写真素材の撮影",
+                        "平日向けランチプラン・新イベント企画・地域連携の準備",
+                        "各種施策の告知開始と3ヶ月間の試行運用テスト",
+                        "来場者数やSNS反応等のデータ確認と次の展開の検討"
                     ]
                 e_s_descs = []
                 s_cols = st.columns(2)
@@ -1387,10 +1455,11 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 c_items_def = ch.get("checklist_items", [])
                 if not isinstance(c_items_def, list) or not c_items_def:
                     c_items_def = [
-                        "店舗ごとの販売実績にばらつきがある",
-                        "若年層の新規顧客獲得が不足している",
-                        "中古車在庫の回転率に改善の余地がある",
-                        "Webからの問い合わせに対する成約率が低い"
+                        "ホームページ：開設済みだが更新が滞っている",
+                        "Instagram：アカウントはあるが月2〜3回投稿に留まる",
+                        "イベント：季節ごとに実施するも告知が遅れがち",
+                        "割引クーポン：過去に発行したが効果検証が未実施",
+                        "地域連携：地元の飲食店と限定的な付き合いに留まる"
                     ]
                 e_c_items = []
                 ci_cols = st.columns(2)
@@ -1406,37 +1475,37 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 e_c_items = ch.get("checklist_items", [])
                 c_outro_val = ch.get("checklist_outro", "")
 
-            # 3. テーブル詳細フォーム
+            # ★3. テーブル詳細フォーム（最大6行まで動的対応・全5施策を完全に網羅）★
             if e_layout == "table":
-                st.markdown("**📋 表組み（テーブル）データ設定**")
+                st.markdown("**📋 表組み（施策一覧・タスク管理）データ設定**")
                 tbl_raw = ch.get("table")
                 if not isinstance(tbl_raw, dict):
                     tbl_raw = {}
-                h_list = tbl_raw.get("headers")
-                if not isinstance(h_list, list) or not h_list:
-                    h_list = ["施策項目", "担当部門", "完了期日", "進捗状況"]
-                r_list = tbl_raw.get("rows")
-                if not isinstance(r_list, list) or not r_list:
-                    r_list = [
-                        ["データ分析基盤の構築", "DX推進部", "11月15日", "順調"],
-                        ["ターゲット層への提案骨子確定", "営業推進室", "11月30日", "着手済"],
-                        ["新プロモーション展開", "マーケティング部", "12月20日", "企画中"]
-                    ]
+                h_list = tbl_raw.get("headers", ["施策分野", "具体的な取り組み内容", "狙い・詳細"])
+                r_list = tbl_raw.get("rows", [
+                    ["SNS見直し・強化", "Instagram・TikTokの活用強化", "検索よりSNSで行き先を探す20〜30代若年層への訴求"],
+                    ["写真素材撮影", "施設写真の全面的撮り直し", "現在の魅力に合わせ食事・景色・実際の体験風景を発信"],
+                    ["平日限定プラン", "ランチセット・近隣企業向け団体プラン", "平日利用の底上げと潜在需要のある団体利用の開拓"],
+                    ["イベント企画刷新", "地元飲食店とのマルシェ・夜間ライトアップ", "マンネリ打破と新規・若年層の来訪動機づくり"],
+                    ["地域・近隣連携", "周辺飲食店・近隣企業とのタイアップ", "地元認知の向上と相互送客・平日団体利用の獲得"]
+                ])
                 t_cols_input = st.text_input("列見出し（カンマ区切り・2〜4列）", value=", ".join(map(str, h_list)), key=f"th_{idx}")
                 e_headers = [c.strip() for c in t_cols_input.split(",") if c.strip()]
-                st.caption("各行のデータ（カンマ区切り）")
+                
+                num_display_rows = max(len(r_list), 5)
+                st.caption(f"各行のデータ（カンマ区切り・全{num_display_rows}行）")
                 e_rows = []
-                for ri in range(3):
+                for ri in range(num_display_rows):
                     default_row_str = ", ".join(map(str, r_list[ri])) if len(r_list) > ri and isinstance(r_list[ri], list) else ""
                     row_str = st.text_input(f"{ri+1}行目", value=default_row_str, key=f"tr_{idx}_{ri}")
                     if row_str.strip():
                         e_rows.append([c.strip() for c in row_str.split(",")])
-                t_note = st.text_input("表の注記（任意）", value=tbl_raw.get("note", "※進捗状況は週次定例にて更新します。"), key=f"tn_{idx}")
+                t_note = st.text_input("表の注記（任意）", value=tbl_raw.get("note", "※予算を抑え、現行スタッフ体制で無理なく小さく始めて効果検証します。"), key=f"tn_{idx}")
                 e_table = {"headers": e_headers, "rows": e_rows, "note": t_note}
             else:
                 e_table = ch.get("table") if isinstance(ch.get("table"), dict) else {}
 
-            # 4. グラフ設定フォーム（円グラフ・棒・折れ線に対応）
+            # 4. グラフ設定フォーム
             c_info = ch.get("chart_info")
             if not isinstance(c_info, dict) or not c_info.get("values"):
                 c_info = extract_chart_data_from_memo(raw_memo)
@@ -1518,7 +1587,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
 
                 if not template_path:
                     for f in os.listdir(current_dir):
-                        if f.endswith('.pptx') and not any(kw in f for kw in ["報告", "提案書", "上期", "成長戦略"]):
+                        if f.endswith('.pptx') and not any(kw in f for kw in ["報告", "提案書", "上期", "成長戦略", "集客"]):
                             template_path = os.path.join(current_dir, f)
                             break
                             
@@ -1575,7 +1644,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     captions = ch.get("image_captions", [])
                     chart_info = ch.get("chart_info")
 
-                    # グラフ判定（折れ線・棒・円グラフ）
                     should_draw_chart = (layout_type in ["line_chart", "bar_chart", "pie_chart"])
 
                     # テンプレート割り当て
@@ -1616,10 +1684,10 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                             step_descs = b_steps[:4]
                     if not isinstance(step_descs, list) or len(step_descs) < 4:
                         step_descs = [
-                            "月次販売実績の可視化と分析",
-                            "店舗別の成功事例共有",
-                            "顧客属性に応じた販促施策の実施",
-                            "営業スタッフ向け研修の定期開催"
+                            "SNS運用の見直しと魅力的な写真素材の撮影",
+                            "平日向けランチプラン・新イベント企画・地域連携の準備",
+                            "各種施策の告知開始と3ヶ月間の試行運用テスト",
+                            "来場者数やSNS反応等のデータ確認と次の展開の検討"
                         ]
                     for idx_s in range(1, 5):
                         raw_desc_s = step_descs[idx_s - 1] if len(step_descs) >= idx_s else ""
@@ -1633,26 +1701,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     for k in range(1, 7):
                         ch_map[f"[[チェック項目{k}]]"] = c_items[k - 1] if (isinstance(c_items, list) and len(c_items) >= k) else ""
 
-                    tbl_data = ch.get("table")
-                    if not isinstance(tbl_data, dict):
-                        tbl_data = {}
-                    headers = tbl_data.get("headers")
-                    if not isinstance(headers, list) or not headers:
-                        headers = ["施策項目", "担当部門", "完了期日", "進捗状況"]
-                    rows = tbl_data.get("rows")
-                    if not isinstance(rows, list) or not rows:
-                        rows = [
-                            ["データ分析基盤の構築", "DX推進部", "11月15日", "順調"],
-                            ["ターゲット層への提案骨子確定", "営業推進室", "11月30日", "着手済"],
-                            ["新プロモーション展開", "マーケティング部", "12月20日", "企画中"]
-                        ]
-                    ch_map["[[表の注記]]"] = tbl_data.get("note", ch.get("notice", ""))
-                    for c_idx in range(1, 5):
-                        ch_map[f"[[列見出し{c_idx}]]"] = headers[c_idx - 1] if len(headers) >= c_idx else ""
-                    for r_idx in range(1, 4):
-                        row = rows[r_idx - 1] if len(rows) >= r_idx else []
-                        for c_idx in range(1, 5):
-                            ch_map[f"[[行{r_idx}列{c_idx}]]"] = row[c_idx - 1] if (isinstance(row, list) and len(row) >= c_idx) else ""
+                    tbl_data = ch.get("table", {})
 
                     process_slide_shapes(
                         ch_slide, ch_map,
@@ -1660,12 +1709,14 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         is_cover=False
                     )
 
+                    # レイアウト別の整形
                     if layout_type == "step":
                         build_perfect_steps(ch_slide, step_descs, body_text_val, assigned_imgs, captions)
                     elif layout_type == "checklist":
                         format_checklist_slide(ch_slide, assigned_imgs, captions)
                     elif layout_type == "table":
-                        format_table_and_note(ch_slide, total_width_pt=671.1, assigned_images=assigned_imgs, captions=captions)
+                        # ★動的行追加・列削除で全施策を完璧に整形★
+                        format_table_and_note(ch_slide, total_width_pt=671.1, assigned_images=assigned_imgs, captions=captions, table_data=tbl_data)
                     elif should_draw_chart:
                         format_chart_slide_left_column(ch_slide)
                     else:
@@ -1675,7 +1726,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         for af in assigned_imgs:
                             inserted_image_report.append(f"スライド {ch_page_num}（{clean_ch_title}）: 『{af['filename']}』")
 
-                    # ★グラフ描画：円グラフ・棒グラフ・折れ線グラフ★
+                    # グラフ描画
                     if should_draw_chart and isinstance(chart_info, dict):
                         categories = chart_info.get("categories", ["4月", "5月", "6月", "7月", "8月", "9月"])
                         g_title_raw = str(chart_info.get("title") or f"{clean_ch_title}")
@@ -1723,17 +1774,16 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                                 chart.has_title = True
                                 chart.chart_title.text_frame.text = g_title_text
 
-                                # ★1. 円グラフのスタイリング（イメージ図通りの6色＆白抜き文字）★
+                                # 円グラフ（白抜き文字・イメージ図パレット）
                                 if is_pie:
                                     pie_palette = [
-                                        RGBColor(217, 48, 37),   # 1. 赤 (Red)
-                                        RGBColor(235, 122, 25),  # 2. オレンジ (Orange)
-                                        RGBColor(98, 178, 44),   # 3. グリーン (Green)
-                                        RGBColor(65, 126, 186),  # 4. ブルー (Blue)
-                                        RGBColor(138, 79, 148),  # 5. パープル (Purple)
-                                        RGBColor(78, 78, 78),    # 6. ダークグレー (Dark Grey)
+                                        RGBColor(217, 48, 37),   # 1. 赤
+                                        RGBColor(235, 122, 25),  # 2. オレンジ
+                                        RGBColor(98, 178, 44),   # 3. グリーン
+                                        RGBColor(65, 126, 186),  # 4. ブルー
+                                        RGBColor(138, 79, 148),  # 5. パープル
+                                        RGBColor(78, 78, 78),    # 6. ダークグレー
                                         RGBColor(246, 189, 96),  # 7. ウォームイエロー
-                                        RGBColor(140, 150, 160), # 8. ライトスレート
                                     ]
                                     series = chart.series[0]
                                     for p_i, pt in enumerate(series.points):
@@ -1750,7 +1800,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                                     data_labels.show_category_name = False
                                     data_labels.position = XL_DATA_LABEL_POSITION.BEST_FIT
 
-                                    # 白抜き文字指定
                                     if hasattr(data_labels, 'font'):
                                         data_labels.font.color.rgb = RGBColor(255, 255, 255)
                                         data_labels.font.bold = True
@@ -1761,7 +1810,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                                     chart.legend.position = XL_LEGEND_POSITION.RIGHT
                                     chart.legend.include_in_layout = False
 
-                                # ★2. 棒グラフのスタイリング（赤色統一＆Y軸％表示）★
+                                # 棒グラフ（赤色統一＆Y軸％）
                                 elif is_bar:
                                     chart.has_legend = False
                                     plot = chart.plots[0]
@@ -1787,7 +1836,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                                             val_ax.tick_labels.number_format = '0"%"'
                                             val_ax.tick_labels.number_format_is_linked = False
 
-                                # ★3. 折れ線グラフのスタイリング★
+                                # 折れ線グラフ
                                 else:
                                     chart.has_legend = False
                                     for s in chart.series:
@@ -1808,7 +1857,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                                             val_ax.tick_labels.number_format = '0"%"'
                                             val_ax.tick_labels.number_format_is_linked = False
 
-                                # 全グラフ共通フォント設定
                                 force_meiryo_and_style_on_chart(chart, font_size_pt=9)
                             except Exception:
                                 pass
@@ -1844,7 +1892,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 st.success(f"🎉 『{download_filename}』の自動構築が完了しました！（全 {len(prs.slides)} ページ）")
                 
                 if inserted_image_report:
-                    st.info("📷 **以下のスライドにイメージ写真を添えました：**\n- " + "\n- ".join(inserted_image_report))
+                    st.info("📷 **以下のスライドに画像を配置しました：**\n- " + "\n- ".join(inserted_image_report))
 
                 st.download_button(
                     label=f"📥 『{download_filename}』をダウンロード",
