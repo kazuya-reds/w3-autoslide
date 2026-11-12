@@ -48,7 +48,8 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.image("logo.png", width=350)
+if os.path.exists("logo.png"):
+    st.image("logo.png", width=350)
 st.caption("AI資料 自動生成システム")
 
 LAYOUT_MAP = {
@@ -64,6 +65,7 @@ LAYOUT_REVERSE_MAP = {v: k for k, v in LAYOUT_MAP.items()}
 
 if "saved_images" not in st.session_state:
     st.session_state["saved_images"] = []
+
 
 def call_gemini_with_retry(client, prompt, max_retries=5):
     model_name = 'gemini-3.6-flash'
@@ -84,25 +86,40 @@ def call_gemini_with_retry(client, prompt, max_retries=5):
                 raise e
     raise last_exception if last_exception else Exception("AIサーバーの混雑が続いています。1〜2分置かれてから再度お試しください。")
 
+
 def clean_notice_text(text):
-    if not text: return ""
+    if not text:
+        return ""
     return re.sub(r'^(?:[※\*\:\s]|注意[：:]|注[：:])+', '', str(text).strip())
 
+
 def sanitize_text_empty_lines(text):
-    if not text: return ""
+    if not text:
+        return ""
     return re.sub(r'\n{2,}', '\n', str(text).strip())
+
 
 def clean_chapter_title(title):
     if not title:
         return ""
-    res = re.sub(r'^(?:第\s*\d+\s*[章節]\s*|\d{1,2}[\.\:\-_・／/]\s*|\d{2}\s+(?![ヶカか年月週日つ個大度ステップSTEP])|\d{1}\s+(?![ヶカか年月週日つ個大度ステップSTEP]))', '', str(title).strip())
+    res = re.sub(
+        r'^(?:第\s*\d+\s*[章節]\s*|\d{1,2}[\.\:\-_・／/]\s*|\d{2}\s+(?![ヶカか年月週日つ個大度ステップSTEP])|\d{1}\s+(?![ヶカか年月週日つ個大度ステップSTEP]))',
+        '',
+        str(title).strip()
+    )
     return res.strip()
+
 
 def clean_step_text(text):
     if not text:
         return ""
-    cleaned = re.sub(r'^(?:[①-⑳]|\(?\d+[\.\)）]\s*|(?:STEP|Step|step|ステップ)\s*\d+[\:\s・]*|[・\-\*]\s*)+', '', str(text).strip())
+    cleaned = re.sub(
+        r'^(?:[①-⑳]|\(?\d+[\.\)）]\s*|(?:STEP|Step|step|ステップ)\s*\d+[\:\s・]*|[・\-\*]\s*)+',
+        '',
+        str(text).strip()
+    )
     return cleaned.strip()
+
 
 def sanitize_main_item(main_item, clean_ch_title):
     main_item = str(main_item).strip() if main_item else ""
@@ -124,6 +141,7 @@ def sanitize_main_item(main_item, clean_ch_title):
             else:
                 main_item = clean_ch_title[:12]
     return main_item
+
 
 def extract_chart_data_from_memo(text):
     pattern = r'(\d{1,2}月)[^\d\n]{0,10}?(\d{1,3}(?:,\d{3})*(?:\.\d+)?|\d+(?:\.\d+)?)\s*(?:万|万円)?'
@@ -157,6 +175,7 @@ def extract_chart_data_from_memo(text):
         "values": [1200.0, 1450.0, 1380.0, 1600.0, 1850.0, 1720.0]
     }
 
+
 def duplicate_slide_safe(prs, src_idx):
     src_slide = prs.slides[src_idx]
     new_slide = prs.slides.add_slide(src_slide.slide_layout)
@@ -170,12 +189,12 @@ def duplicate_slide_safe(prs, src_idx):
     for shape in src_slide.shapes:
         if shape.has_chart:
             continue
-            
+
         new_el = copy.deepcopy(shape._element)
         for node in new_el.iter():
             if node.tag.endswith('creationId'):
                 node.attrib['id'] = f"{{{str(uuid.uuid4()).upper()}}}"
-                
+
         try:
             r_ids = new_el.xpath('.//@r:embed | .//@r:id')
             for rId in set(r_ids):
@@ -193,6 +212,7 @@ def duplicate_slide_safe(prs, src_idx):
             pass
         spTree.append(new_el)
     return new_slide
+
 
 def ensure_page_number(slide, page_num):
     found_shp = None
@@ -237,6 +257,7 @@ def ensure_page_number(slide, page_num):
         p.font.bold = True
         p.font.color.rgb = RGBColor(2, 24, 46)
 
+
 def fix_all_xml_integrity_safe(prs):
     global_id = 100
     for sld in prs.slides:
@@ -273,6 +294,7 @@ def fix_all_xml_integrity_safe(prs):
         except Exception:
             pass
 
+
 def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
     ns_a = nsdecls("a")
     if chart.has_title and chart.chart_title.text_frame:
@@ -286,7 +308,7 @@ def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
                     defRPr.remove(child)
             defRPr.append(parse_xml(f'<a:ea {ns_a} typeface="メイリオ"/>'))
             defRPr.append(parse_xml(f'<a:latin {ns_a} typeface="Meiryo"/>'))
-            
+
             for r in p.runs:
                 rPr = r._r.get_or_add_rPr()
                 rPr.attrib['sz'] = '1200'
@@ -322,7 +344,7 @@ def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
                 p = parse_xml(f'<a:p {ns_a}><a:pPr/></a:p>')
                 txPr.append(p)
                 p_list = [p]
-                
+
             for p in p_list:
                 pPr = p.get_or_add_pPr()
                 defRPr = pPr.get_or_add_defRPr()
@@ -355,6 +377,7 @@ def force_meiryo_and_style_on_chart(chart, font_size_pt=9):
         except (ValueError, AttributeError):
             pass
 
+
 def wipe_right_side_shapes(slide):
     shapes_to_del = []
     for shp in slide.shapes:
@@ -362,7 +385,7 @@ def wipe_right_side_shapes(slide):
             continue
         if shp.is_placeholder and shp.placeholder_format.type == PP_PLACEHOLDER.SLIDE_NUMBER:
             continue
-            
+
         if shp.left > Pt(350):
             if shp.shape_type in [13, 14]:
                 shapes_to_del.append(shp)
@@ -377,6 +400,7 @@ def wipe_right_side_shapes(slide):
             sp.getparent().remove(sp)
         except Exception:
             pass
+
 
 def insert_slide_picture_safe(slide, assigned_images, captions=None, max_w_pt=350, max_h_pt=280, left_pt=420, top_pt=140):
     if not assigned_images or len(assigned_images) == 0:
@@ -406,10 +430,11 @@ def insert_slide_picture_safe(slide, assigned_images, captions=None, max_w_pt=35
         p.font.name = "メイリオ"
         p.font.color.rgb = RGBColor(120, 120, 120)
 
+
 def build_perfect_steps(slide, step_descs, body_text="", assigned_images=None, captions=None):
     wipe_right_side_shapes(slide)
     has_image = bool(assigned_images and len(assigned_images) > 0)
-    
+
     shapes_to_del = []
     main_body_shp = None
     for shp in slide.shapes:
@@ -466,14 +491,22 @@ def build_perfect_steps(slide, step_descs, body_text="", assigned_images=None, c
 
     for shp in slide.shapes:
         sname = shp.name.upper()
-        if "STEP_1_BADGE" in sname: step_badges[1] = shp
-        elif "STEP_1_TEXT" in sname: step_texts[1] = shp
-        elif "STEP_2_BADGE" in sname: step_badges[2] = shp
-        elif "STEP_2_TEXT" in sname: step_texts[2] = shp
-        elif "STEP_3_BADGE" in sname: step_badges[3] = shp
-        elif "STEP_3_TEXT" in sname: step_texts[3] = shp
-        elif "STEP_4_BADGE" in sname: step_badges[4] = shp
-        elif "STEP_4_TEXT" in sname: step_texts[4] = shp
+        if "STEP_1_BADGE" in sname:
+            step_badges[1] = shp
+        elif "STEP_1_TEXT" in sname:
+            step_texts[1] = shp
+        elif "STEP_2_BADGE" in sname:
+            step_badges[2] = shp
+        elif "STEP_2_TEXT" in sname:
+            step_texts[2] = shp
+        elif "STEP_3_BADGE" in sname:
+            step_badges[3] = shp
+        elif "STEP_3_TEXT" in sname:
+            step_texts[3] = shp
+        elif "STEP_4_BADGE" in sname:
+            step_badges[4] = shp
+        elif "STEP_4_TEXT" in sname:
+            step_texts[4] = shp
 
     if 1 in step_badges and 1 in step_texts:
         base_b = step_badges[1]
@@ -544,6 +577,7 @@ def build_perfect_steps(slide, step_descs, body_text="", assigned_images=None, c
     if has_image:
         insert_slide_picture_safe(slide, assigned_images, captions, max_w_pt=340, max_h_pt=270, left_pt=420, top_pt=145)
 
+
 def format_checklist_slide(slide, assigned_images=None, captions=None):
     wipe_right_side_shapes(slide)
     has_image = bool(assigned_images and len(assigned_images) > 0)
@@ -573,7 +607,7 @@ def format_checklist_slide(slide, assigned_images=None, captions=None):
             outro_shape = shp
         elif any(kw in sname for kw in ["CAUTION", "SUPPLEMENT", "注意", "補足", "CAPTION"]):
             shapes_to_del.append(shp)
-        elif shp.shape_type == 1 and Pt(50) < Pt(300):
+        elif shp.shape_type == 1 and Pt(50) < shp.width < Pt(300):
             shapes_to_del.append(shp)
 
     for shp in shapes_to_del:
@@ -610,7 +644,7 @@ def format_checklist_slide(slide, assigned_images=None, captions=None):
         tf = items_shape.text_frame
         valid_paras = [p for p in tf.paragraphs if p.text.strip()]
         num_items = max(1, len(valid_paras))
-        
+
         for p in tf.paragraphs:
             p.font.name = "メイリオ"
             p.font.size = Pt(10.5) if has_image else Pt(12.0)
@@ -633,43 +667,45 @@ def format_checklist_slide(slide, assigned_images=None, captions=None):
     if has_image:
         insert_slide_picture_safe(slide, assigned_images, captions, max_w_pt=340, max_h_pt=270, left_pt=430, top_pt=145)
 
+
 def apply_clean_table_borders(table):
     ns_a = nsdecls("a")
     border_dark = "02182E"
     border_light = "808C99"
-    
+
     tbl_el = table._tbl
     trs = tbl_el.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}tr')
-    
+
     for r_idx, tr in enumerate(trs):
         is_header = (r_idx == 0)
         is_last_row = (r_idx == len(trs) - 1)
         tcs = tr.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}tc')
-        
+
         for c_idx, tc in enumerate(tcs):
             is_first_col = (c_idx == 0)
             is_last_col = (c_idx == len(tcs) - 1)
             tcPr = tc.get_or_add_tcPr()
-            
+
             for b_tag in ['lnL', 'lnR', 'lnT', 'lnB', 'lnTlToBr', 'lnBlToTr']:
                 old_b = tcPr.find(f'{{http://schemas.openxmlformats.org/drawingml/2006/main}}{b_tag}')
                 if old_b is not None:
                     tcPr.remove(old_b)
-            
+
             if is_header:
                 tcPr.append(parse_xml(f'<a:lnT {ns_a} w="19050" cmpd="sng"><a:solidFill><a:srgbClr val="{border_dark}"/></a:solidFill></a:lnT>'))
             else:
                 tcPr.append(parse_xml(f'<a:lnT {ns_a} w="12700" cmpd="sng"><a:solidFill><a:srgbClr val="{border_light}"/></a:solidFill></a:lnT>'))
-                
+
             if is_header:
                 tcPr.append(parse_xml(f'<a:lnB {ns_a} w="25400" cmpd="sng"><a:solidFill><a:srgbClr val="{border_dark}"/></a:solidFill></a:lnB>'))
             elif is_last_row:
                 tcPr.append(parse_xml(f'<a:lnB {ns_a} w="19050" cmpd="sng"><a:solidFill><a:srgbClr val="{border_dark}"/></a:solidFill></a:lnB>'))
             else:
                 tcPr.append(parse_xml(f'<a:lnB {ns_a} w="12700" cmpd="sng"><a:solidFill><a:srgbClr val="{border_light}"/></a:solidFill></a:lnB>'))
-                
+
             tcPr.append(parse_xml(f'<a:lnL {ns_a} w="12700" cmpd="sng"><a:solidFill><a:srgbClr val="{border_dark if is_first_col else border_light}"/></a:solidFill></a:lnL>'))
             tcPr.append(parse_xml(f'<a:lnR {ns_a} w="12700" cmpd="sng"><a:solidFill><a:srgbClr val="{border_dark if is_last_col else border_light}"/></a:solidFill></a:lnR>'))
+
 
 def format_table_and_note(slide, total_width_pt=671.1, assigned_images=None, captions=None, table_data=None):
     wipe_right_side_shapes(slide)
@@ -700,7 +736,7 @@ def format_table_and_note(slide, total_width_pt=671.1, assigned_images=None, cap
         table = tbl_shape.table
         tbl_shape.left = Pt(113.7)
         tbl_shape.top = Pt(145.0)
-        
+
         headers = table_data.get("headers", [])
         rows = table_data.get("rows", [])
         target_cols = max(1, len(headers))
@@ -782,6 +818,7 @@ def format_table_and_note(slide, total_width_pt=671.1, assigned_images=None, cap
     if has_image:
         insert_slide_picture_safe(slide, assigned_images, captions, max_w_pt=320, max_h_pt=260, left_pt=450, top_pt=145)
 
+
 def format_chart_slide_left_column(slide):
     main_line = None
     main_title = None
@@ -839,7 +876,10 @@ def format_chart_slide_left_column(slide):
         main_body.height = int(b_h)
         curr_y += b_h + Pt(14.0)
 
-    if sub_title or sub_body:
+    has_sub = (sub_title and sub_title.has_text_frame and sub_title.text_frame.text.strip()) or \
+              (sub_body and sub_body.has_text_frame and sub_body.text_frame.text.strip())
+
+    if has_sub:
         if sub_title and sub_title.has_text_frame and sub_title.text_frame.text.strip():
             sub_title.left = Pt(124.6)
             sub_title.top = int(curr_y)
@@ -874,6 +914,7 @@ def format_chart_slide_left_column(slide):
                     sp.getparent().remove(sp)
                 except Exception:
                     pass
+
 
 def format_text_or_image_slide_layout(slide, assigned_images, captions=None):
     main_title = None
@@ -1022,6 +1063,7 @@ def format_text_or_image_slide_layout(slide, assigned_images, captions=None):
     if has_image:
         insert_slide_picture_safe(slide, assigned_images, captions, max_w_pt=360, max_h_pt=300, left_pt=390, top_pt=130)
 
+
 def format_and_align_index_slide(slide):
     title_shapes = {}
     page_shapes = {}
@@ -1087,6 +1129,7 @@ def format_and_align_index_slide(slide):
                         r.font.size = Pt(18.0)
                         r.font.bold = True
 
+
 def format_chapter_title_paragraph(p, ch_num, ch_title):
     clean_title = clean_chapter_title(ch_title)
     p.text = ""
@@ -1102,6 +1145,7 @@ def format_chapter_title_paragraph(p, ch_num, ch_title):
     r1.font.name = "メイリオ"
     r1.font.size = Pt(20.0)
     r1.font.bold = True
+
 
 def process_paragraph_runs(p, replace_map, chapter_num=None, chapter_title=None, is_cover=False):
     if "00" in p.text or "[[章タイトル]]" in p.text:
@@ -1138,6 +1182,7 @@ def process_paragraph_runs(p, replace_map, chapter_num=None, chapter_title=None,
         if not any(tag in p.text for tag in ["[[章タイトル]]", "STEP", "P1", "P2", "□"]):
             for r in p.runs:
                 r.font.name = "メイリオ"
+
 
 def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=None, is_cover=False):
     shapes_to_remove = []
@@ -1200,6 +1245,7 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
         except Exception:
             pass
 
+
 def run_quality_check(raw_memo, edited_chapters, doc_title):
     memo_topics = {
         "平日集客の対策": ["平日", "ランチ", "団体"],
@@ -1210,7 +1256,7 @@ def run_quality_check(raw_memo, edited_chapters, doc_title):
         "若年層（20〜30代）の獲得": ["若い", "若年", "20代", "30代"],
         "現場の負担配慮・スモールスタート": ["人手", "スタッフ", "無理なく", "スモールスタート", "予算"]
     }
-    
+
     all_slide_text = doc_title + " " + " ".join([
         ch.get("chapter_title", "") + " " +
         ch.get("main_item", "") + " " +
@@ -1222,14 +1268,459 @@ def run_quality_check(raw_memo, edited_chapters, doc_title):
         " ".join([val for row in ch.get("table", {}).get("rows", []) for val in row])
         for ch in edited_chapters
     ])
-    
+
     results = {}
     for topic, kws in memo_topics.items():
         found = any(kw in all_slide_text for kw in kws)
         results[topic] = found
-        
+
     return results
-    # 1. 表紙スライド
+
+
+# ==========================================
+# 1. 入力UI ＆ サイドバー
+# ==========================================
+with st.sidebar:
+    st.header("⚙️ 設定")
+    api_key = st.secrets.get("GEMINI_API_KEY", "")
+    st.info("テンプレート: 資料作成テンプレート_A4横.pptx")
+
+    if st.button("🔄 データを初期化して最初から行う"):
+        st.session_state.pop("parsed_data", None)
+        st.session_state.pop("analyzed", None)
+        st.session_state.pop("saved_images", None)
+        st.session_state.pop("refined_title", None)
+        st.rerun()
+
+col1, col2 = st.columns(2)
+with col1:
+    client_name = st.text_input("提案先（顧客名）", "例）株式会社グリーンリゾート 役員会 各位")
+    doc_title = st.text_input("資料タイトル", "平日集客の強化と若年層獲得に向けた再生・活性化計画")
+with col2:
+    sender_name = st.text_input("作成者・部署など", "企画推進室")
+    uploaded_files = st.file_uploader(
+        "挿入画像（任意・複数可）",
+        type=["png", "jpg", "jpeg"],
+        accept_multiple_files=True,
+        key="main_file_uploader_key"
+    )
+
+if uploaded_files:
+    current_files_map = {f.name: f.getvalue() for f in uploaded_files}
+    saved_map = {img["filename"]: img["bytes"] for img in st.session_state.get("saved_images", [])}
+    saved_map.update(current_files_map)
+    st.session_state["saved_images"] = [{"filename": k, "bytes": v} for k, v in saved_map.items()]
+
+active_images = st.session_state.get("saved_images", [])
+
+image_contexts = []
+if active_images:
+    st.success(f"📷 合計 {len(active_images)} 枚の画像が読み込まれました。")
+    for row_start in range(0, len(active_images), 4):
+        row_imgs = active_images[row_start:row_start + 4]
+        cols = st.columns(4)
+        for col_idx, img_item in enumerate(row_imgs):
+            actual_idx = row_start + col_idx
+            with cols[col_idx]:
+                st.image(img_item["bytes"], caption=f"画像{actual_idx+1}: {img_item['filename']}", use_container_width=True)
+                desc = st.text_input(f"画像{actual_idx+1}の説明", placeholder="例：サービスイメージ図", key=f"img_ctx_{actual_idx}")
+                image_contexts.append({"index": actual_idx, "filename": img_item["filename"], "description": desc})
+
+raw_memo = st.text_area(
+    "資料の内容メモ",
+    """最近ちょっとお客さんが減っている気がする。特に平日。土日はそれなりに来ているけど、平日はかなり空いている日もある。
+
+去年と比べても全体的にあまり良くない。正確な数字は確認が必要だけど、感覚としては1割くらい減っているんじゃないかと思う。
+
+特に若い人が少ない。ファミリーは来てくれているけど、20代とか30代前半くらいの人にはあまり選ばれていないのかもしれない。
+
+そもそも施設のことを知らない人も多いと思う。近隣の人でも、何ができる場所なのかよく分からないという話を聞いたことがある。
+
+今やっていること
+・ホームページはあるけど、あまり更新できていない
+・Instagramは一応やっている。投稿は月に2〜3回程度
+・イベントは季節ごとに実施しているが、告知が遅くなりがち
+・割引クーポンを出したことはあるが、その後どうだったかよく分からない
+・地元の飲食店とは少し付き合いがある
+
+個人的にはSNSをもっと活用した方がいいと思う。特にInstagramやTikTok。若い人は検索よりもSNSで行き先を探している印象がある。
+
+あと、施設の写真が少し古い。今の雰囲気と違うので、写真を撮り直した方がいい。食事や景色、実際に楽しんでいる人の写真などがあると良さそう。
+
+平日限定のプランも検討したい。例えばランチと施設利用をセットにするとか、近隣の会社向けに団体プランを作るとか。団体利用は意外と可能性があると思う。
+
+イベントについても、今は毎年同じような内容になっているので、もう少し新しい企画が欲しい。例えば地元の飲食店と一緒にマルシェをやるとか、夜のライトアップなども面白そう。
+
+気になっているのは人手不足。新しいことをやりたくても、現場のスタッフに負担がかかるのは避けたい。できれば今いるメンバーで無理なく運営できる形がいい。
+
+予算はあまり大きくかけられない。まずはできることから小さく始めて、効果があれば広げていくのが良いと思う。
+
+今後やりたいこととしては、
+・SNSの見直し
+・写真素材の撮影
+・平日向けプランの検討
+・イベントの見直し
+・近隣企業や店舗との連携
+
+といったところ。
+
+まずは3か月くらい試してみて、来場者数やSNSの反応などを見ながら次の展開を考えたい。
+
+最終的には、平日の来場者を増やすことと、若い世代にも選ばれる施設にしていくことが目標。""",
+    height=240
+)
+
+
+# ==========================================
+# ステップ1: AIで構造解析
+# ==========================================
+st.markdown("---")
+col_btn1, col_btn2 = st.columns([2, 1])
+
+with col_btn1:
+    if st.button("🔍 AIでメモを解析し、構成プレビューを作成する", use_container_width=True):
+        if not api_key:
+            st.error("APIキーが設定されていません。.streamlit/secrets.toml をご確認ください。")
+        elif not raw_memo.strip():
+            st.error("提案メモを入力してください。")
+        else:
+            with st.spinner("AIがメモを解析中..."):
+                try:
+                    client = genai.Client(api_key=api_key)
+                    prompt_data = {
+                        "client_name": client_name,
+                        "doc_title": doc_title,
+                        "raw_memo": raw_memo,
+                        "image_contexts": image_contexts
+                    }
+
+                    single_pass_prompt = f"""
+                    あなたは卓越した経営プレゼン資料作成のプロコンサルタントです。
+                    以下の入力を直接分析し、メモに書かれた施策・課題・検討事項を【1つも省略せず完全に網羅】したプレゼンスライド用JSONを作成してください。
+
+                    【入力データ】
+                    {json.dumps(prompt_data, ensure_ascii=False, indent=2)}
+
+                    【必須生成ルール】
+                    1. ★資料タイトルの洗練★:
+                       - 入力されたタイトルが口語やメモ的な場合（例: 「〜について」「今後どうしていくか」など）、経営会議や提案書に相応しい洗練されたビジネスプレゼンタイトル（例: 「平日集客の強化と若年層獲得に向けた再生・活性化計画」）を考案し、"suggested_doc_title" に格納してください。
+                    2. ★施策一覧（table）の完全網羅ルール（最重要）★:
+                       - メモにある「今後やりたいこと」（①SNSの見直し、②写真素材の撮影、③平日向けプランの検討、④イベントの見直し、⑤近隣企業や店舗との連携）を【絶対に削らず全5項目すべて】表（table）の行に含めてください。
+                       - tableの形式:
+                         "table": {{
+                           "headers": ["施策分野", "具体的な取り組み内容", "狙い・詳細"],
+                           "rows": [
+                             ["SNS見直し・強化", "Instagram・TikTokの活用強化", "検索よりSNSで行き先を探す20〜30代若年層への訴求"],
+                             ["写真素材撮影", "施設写真の全面的撮り直し", "現在の魅力に合わせ食事・景色・実際の体験風景を発信"],
+                             ["平日限定プラン", "ランチセット・近隣企業向け団体プラン", "平日利用の底上げと潜在需要のある団体利用の開拓"],
+                             ["イベント企画刷新", "地元飲食店とのマルシェ・夜間ライトアップ", "マンネリ打破と新規・若年層の来訪動機づくり"],
+                             ["地域・近隣連携", "周辺飲食店・近隣企業とのタイアップ", "地元認知の向上と相互送客・平日団体利用の獲得"]
+                           ],
+                           "note": "※予算を抑え、現行スタッフ体制で無理なく小さく始めて効果検証します。"
+                         }}
+                    3. 各章のコンテンツに合わせたレイアウト選定:
+                       - "line_chart": 月別推移などの数値変化
+                       - "pie_chart": 年代構成、割合、シェアなど（合計100%になるデータ）
+                       - "bar_chart": 複数項目の数量比較
+                       - "text": 現状課題、運営方針、制約条件、最終目標など
+                       - "step": 3ヶ月の試行・検証スケジュールなど手順フロー
+                       - "checklist": 現状の取り組み状況一覧など確認事項
+                       - "table": 上記の施策一覧
+                    4. "step" の場合:
+                       - "step_descs": メモから抽出した具体的な4つのアクションステップ文字列配列。※先頭に「①」「②」「1.」「STEP 1」などの番号記号は絶対に付けないでください。
+                    5. "main_item": 15文字以内の短いキャッチコピー。
+
+                    【出力形式】
+                    純粋なJSONのみを出力してください。
+                    {{
+                      "suggested_doc_title": "洗練された資料タイトル",
+                      "chapters": [
+                        {{
+                          "chapter_title": "章タイトル",
+                          "layout_type": "text",
+                          "main_item": "主要見出し（15文字以内）",
+                          "body": "本文テキスト",
+                          "sub_title": "補助項目タイトル",
+                          "sub_body": "補助項目本文",
+                          "notice": "",
+                          "assigned_image_indices": [],
+                          "image_captions": [],
+                          "step_descs": ["ステップ1", "ステップ2", "ステップ3", "ステップ4"],
+                          "checklist_intro": "導入文",
+                          "checklist_items": ["項目1", "項目2", "項目3", "項目4"],
+                          "checklist_outro": "案内文",
+                          "table": {{
+                            "headers": ["施策分野", "具体的な取り組み内容", "狙い・詳細"],
+                            "rows": [["行1-1", "行1-2", "行1-3"]],
+                            "note": "※注記文"
+                          }},
+                          "chart_info": {{}}
+                        }}
+                      ]
+                    }}
+                    """
+
+                    txt_res = call_gemini_with_retry(client, single_pass_prompt)
+                    m_json = re.search(r'\{[\s\S]*\}', txt_res)
+                    final_data = json.loads(m_json.group(0) if m_json else txt_res)
+
+                    st.session_state["parsed_data"] = final_data
+                    st.session_state["analyzed"] = True
+
+                    sug_title = final_data.get("suggested_doc_title")
+                    if sug_title and len(sug_title.strip()) > 5:
+                        st.session_state["refined_title"] = sug_title.strip()
+
+                    st.success("✅ AIの構成解析が完了しました！下部の編集フォームで内容を確認・微調整できます。")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"解析中にエラーが発生しました: {e}")
+
+
+# ==========================================
+# ステップ2: WEB編集フォーム ＆ 最終生成
+# ==========================================
+if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state:
+    st.subheader("✏️ AI解析結果のプレビュー ＆ WEB編集フォーム")
+    st.caption("各スライドの内容を自由に変更できます。")
+
+    if "refined_title" in st.session_state:
+        doc_title = st.text_input("資料タイトル（AI洗練タイトル）", value=st.session_state["refined_title"], key="refined_title_box")
+    else:
+        doc_title = st.text_input("資料タイトル", value=doc_title, key="current_title_box")
+
+    parsed_chapters = st.session_state["parsed_data"].get("chapters", [])
+    edited_chapters = []
+
+    for idx, ch in enumerate(parsed_chapters):
+        with st.expander(f"📄 スライド {idx + 1}: {ch.get('chapter_title', '')}", expanded=(idx <= 2)):
+            ec_cols1, ec_cols2 = st.columns([2, 1])
+
+            with ec_cols1:
+                e_title = st.text_input(f"スライド{idx+1} タイトル", value=ch.get("chapter_title", ""), key=f"title_{idx}")
+                e_main = st.text_input(f"スライド{idx+1} 主要見出し（赤帯・15文字以内）", value=ch.get("main_item", ""), key=f"main_{idx}")
+                e_body = st.text_area(f"スライド{idx+1} 本文", value=sanitize_text_empty_lines(ch.get("body", "")), height=100, key=f"body_{idx}")
+
+            with ec_cols2:
+                current_layout_key = str(ch.get("layout_type", "text")).lower()
+                current_label = LAYOUT_MAP.get(current_layout_key, LAYOUT_MAP["text"])
+                labels_list = list(LAYOUT_MAP.values())
+                l_idx = labels_list.index(current_label) if current_label in labels_list else 3
+
+                selected_label = st.selectbox("レイアウトタイプ", labels_list, index=l_idx, key=f"layout_{idx}")
+                e_layout = LAYOUT_REVERSE_MAP[selected_label]
+
+                e_sub_title = st.text_input("補助項目 タイトル", value=ch.get("sub_title", ""), key=f"sub_t_{idx}")
+                e_sub_body = st.text_area("補助項目 本文", value=sanitize_text_empty_lines(ch.get("sub_body", "")), height=68, key=f"sub_b_{idx}")
+
+            e_assigned_indices = []
+            e_captions = []
+            if active_images:
+                st.markdown("**📷 画像の挿入設定（任意）**")
+                img_options = ["（挿入しない）"] + [f"画像{i+1}: {img['filename']}" for i, img in enumerate(active_images)]
+
+                ai_assigned = ch.get("assigned_image_indices", [])
+                default_sel_idx = 0
+                if ai_assigned and len(ai_assigned) > 0 and ai_assigned[0] < len(active_images):
+                    default_sel_idx = ai_assigned[0] + 1
+
+                sel_img = st.selectbox(f"スライド{idx+1} に挿入する画像", img_options, index=default_sel_idx, key=f"img_sel_{idx}")
+                if sel_img != "（挿入しない）":
+                    chosen_idx = img_options.index(sel_img) - 1
+                    e_assigned_indices = [chosen_idx]
+                    old_caps = ch.get("image_captions", [])
+                    default_cap = old_caps[0] if (old_caps and isinstance(old_caps, list) and len(old_caps) > 0) else ""
+                    user_cap = st.text_input("画像のキャプション（任意）", value=default_cap, key=f"cap_{idx}")
+                    e_captions = [user_cap]
+                    st.success(f"✅ このスライドに 『{active_images[chosen_idx]['filename']}』 を挿入します")
+            else:
+                e_assigned_indices = []
+                e_captions = []
+
+            # 1. STEP詳細フォーム
+            if e_layout == "step":
+                st.markdown("**ステップ詳細（最大4ステップ）**")
+                s_descs = ch.get("step_descs", [])
+                if (not isinstance(s_descs, list) or len(s_descs) < 4) and e_body:
+                    b_steps = re.findall(r'(?:\d+[\.\s、]|\・|\-)\s*([^\n]+)', e_body)
+                    if len(b_steps) >= 3:
+                        s_descs = b_steps[:4]
+                if not isinstance(s_descs, list) or len(s_descs) < 4:
+                    s_descs = [
+                        "現状のSNS運用の見直しと魅力的な写真素材の撮影",
+                        "平日向けランチプラン・新イベント企画・地域連携の準備",
+                        "各種施策の告知開始と3ヶ月間の試行運用テスト",
+                        "来場者数やSNS反応等のデータ確認と次の展開の検討"
+                    ]
+                e_s_descs = []
+                s_cols = st.columns(2)
+                for s_i in range(4):
+                    default_s = s_descs[s_i] if len(s_descs) > s_i else f"アクション {s_i+1}"
+                    clean_default = clean_step_text(default_s)
+                    with s_cols[s_i % 2]:
+                        val_s = st.text_input(f"STEP {s_i+1}", value=clean_default, key=f"step_{idx}_{s_i}")
+                        e_s_descs.append(clean_step_text(val_s) if val_s else f"ステップ {s_i+1}")
+            else:
+                e_s_descs = [clean_step_text(t) for t in ch.get("step_descs", [])]
+
+            # 2. チェックリスト詳細フォーム
+            if e_layout == "checklist":
+                st.markdown("**✅ チェックリスト設定（最大6項目）**")
+                c_intro_val = st.text_input("チェックリスト導入文", value=ch.get("checklist_intro", "施策実行における重要確認事項です。"), key=f"c_intro_{idx}")
+                c_items_def = ch.get("checklist_items", [])
+                if not isinstance(c_items_def, list) or not c_items_def:
+                    c_items_def = [
+                        "ホームページ：開設済みだが更新が滞っている",
+                        "Instagram：アカウントはあるが月2〜3回投稿に留まる",
+                        "イベント：季節ごとに実施するも告知が遅れがち",
+                        "割引クーポン：過去に発行したが効果検証が未実施",
+                        "地域連携：地元の飲食店と限定的な付き合いに留まる"
+                    ]
+                e_c_items = []
+                ci_cols = st.columns(2)
+                for ci in range(6):
+                    def_item = c_items_def[ci] if len(c_items_def) > ci else ""
+                    with ci_cols[ci % 2]:
+                        val_item = st.text_input(f"チェック項目 {ci+1}", value=def_item, key=f"ci_{idx}_{ci}")
+                        if val_item.strip():
+                            e_c_items.append(val_item.strip())
+                c_outro_val = st.text_input("確認後の案内文", value=ch.get("checklist_outro", "全項目の確認完了後、各担当部門にて施策を進行してください。"), key=f"c_outro_{idx}")
+            else:
+                c_intro_val = ch.get("checklist_intro", "")
+                e_c_items = ch.get("checklist_items", [])
+                c_outro_val = ch.get("checklist_outro", "")
+
+            # 3. テーブル詳細フォーム
+            if e_layout == "table":
+                st.markdown("**📋 表組み（施策一覧・タスク管理）データ設定**")
+                tbl_raw = ch.get("table")
+                if not isinstance(tbl_raw, dict):
+                    tbl_raw = {}
+                h_list = tbl_raw.get("headers")
+                if not isinstance(h_list, list) or not h_list:
+                    h_list = ["施策分野", "具体的な取り組み内容", "狙い・詳細"]
+                r_list = tbl_raw.get("rows")
+                if not isinstance(r_list, list) or not r_list:
+                    r_list = [
+                        ["SNS見直し・強化", "Instagram・TikTokの活用強化", "検索よりSNSで行き先を探す20〜30代若年層への訴求"],
+                        ["写真素材撮影", "施設写真の全面的撮り直し", "現在の魅力に合わせ食事・景色・実際の体験風景を発信"],
+                        ["平日限定プラン", "ランチセット・近隣企業向け団体プラン", "平日利用の底上げと潜在需要のある団体利用の開拓"],
+                        ["イベント企画刷新", "地元飲食店とのマルシェ・夜間ライトアップ", "マンネリ打破と新規・若年層の来訪動機づくり"],
+                        ["地域・近隣連携", "周辺飲食店・近隣企業とのタイアップ", "地元認知の向上と相互送客・平日団体利用の獲得"]
+                    ]
+                t_cols_input = st.text_input("列見出し（カンマ区切り・2〜4列）", value=", ".join(map(str, h_list)), key=f"th_{idx}")
+                e_headers = [c.strip() for c in t_cols_input.split(",") if c.strip()]
+
+                num_display_rows = max(len(r_list), 5)
+                st.caption(f"各行のデータ（カンマ区切り・全{num_display_rows}行）")
+                e_rows = []
+                for ri in range(num_display_rows):
+                    default_row_str = ", ".join(map(str, r_list[ri])) if len(r_list) > ri and isinstance(r_list[ri], list) else ""
+                    row_str = st.text_input(f"{ri+1}行目", value=default_row_str, key=f"tr_{idx}_{ri}")
+                    if row_str.strip():
+                        e_rows.append([c.strip() for c in row_str.split(",")])
+                t_note = st.text_input("表の注記（任意）", value=tbl_raw.get("note", "※予算を抑え、現行スタッフ体制で無理なく小さく始めて効果検証します。"), key=f"tn_{idx}")
+                e_table = {"headers": e_headers, "rows": e_rows, "note": t_note}
+            else:
+                e_table = ch.get("table") if isinstance(ch.get("table"), dict) else {}
+
+            # 4. グラフ設定フォーム
+            c_info = ch.get("chart_info")
+            if not isinstance(c_info, dict) or not c_info.get("values"):
+                c_info = extract_chart_data_from_memo(raw_memo)
+
+            if e_layout in ["line_chart", "bar_chart", "pie_chart"]:
+                st.markdown("**📊 グラフデータ設定**")
+                g_cols = st.columns([3, 2, 3, 3])
+                with g_cols[0]:
+                    g_title = st.text_input("グラフタイトル", value=c_info.get("title", f"{e_title}"), key=f"gt_{idx}")
+                with g_cols[1]:
+                    def_unit = c_info.get("unit", "")
+                    if not def_unit:
+                        if e_layout == "pie_chart" or any(kw in e_title or kw in e_body for kw in ["％", "%", "比率", "割合", "構成"]):
+                            def_unit = "％"
+                        elif any(kw in e_title or kw in e_body for kw in ["万", "円", "売上"]):
+                            def_unit = "万円"
+                    g_unit = st.text_input("単位（％, 万円, 個など）", value=def_unit, key=f"gu_{idx}")
+                with g_cols[2]:
+                    g_cats_str = st.text_input(
+                        "カテゴリ（カンマ区切り）",
+                        value=",".join(map(str, c_info.get("categories", ["20代", "30代", "40代", "50代", "60代以上"] if e_layout == "pie_chart" else ["4月", "5月", "6月", "7月", "8月", "9月"]))),
+                        key=f"gc_{idx}"
+                    )
+                with g_cols[3]:
+                    def_vals = c_info.get("values", [15, 25, 30, 20, 10] if e_layout == "pie_chart" else [1200, 1450, 1380, 1600, 1850, 1720])
+                    clean_vals = [str(v).replace(',', '') for v in def_vals]
+                    g_vals_str = st.text_input("数値データ（カンマ区切り）", value=",".join(clean_vals), key=f"gv_{idx}")
+
+                cats_list = [c.strip() for c in g_cats_str.split(",") if c.strip()]
+                vals_list = []
+                for v in g_vals_str.split(","):
+                    try:
+                        vals_list.append(float(re.sub(r'[^\d\.]', '', v.replace(',', ''))))
+                    except Exception:
+                        pass
+
+                edited_c_info = {
+                    "title": g_title,
+                    "unit": g_unit.strip(),
+                    "categories": cats_list,
+                    "series_name": c_info.get("series_name", g_title),
+                    "values": vals_list
+                }
+            else:
+                edited_c_info = c_info
+
+            edited_chapters.append({
+                "chapter_title": e_title,
+                "layout_type": e_layout,
+                "main_item": e_main,
+                "body": sanitize_text_empty_lines(e_body),
+                "sub_title": e_sub_title,
+                "sub_body": sanitize_text_empty_lines(e_sub_body),
+                "notice": ch.get("notice", ""),
+                "step_descs": e_s_descs,
+                "checklist_intro": c_intro_val,
+                "checklist_items": e_c_items,
+                "checklist_outro": c_outro_val,
+                "table": e_table,
+                "assigned_image_indices": e_assigned_indices,
+                "image_captions": e_captions,
+                "chart_info": edited_c_info
+            })
+
+    st.markdown("---")
+
+    if st.button("✨ この内容で PowerPoint 資料を自動生成する ✨", key="generate_pptx_btn", type="primary", use_container_width=True):
+        with st.spinner("PowerPoint資料を精密構築中..."):
+            try:
+                current_dir = os.path.dirname(os.path.abspath(__file__))
+
+                template_path = None
+                target_norm = unicodedata.normalize('NFC', '資料作成テンプレート_A4横.pptx')
+
+                for f in os.listdir(current_dir):
+                    if not f.endswith('.pptx'):
+                        continue
+                    f_norm = unicodedata.normalize('NFC', f)
+                    if f_norm == target_norm or "テンプレート" in f_norm or "template" in f_norm.lower():
+                        template_path = os.path.join(current_dir, f)
+                        break
+
+                if not template_path:
+                    for f in os.listdir(current_dir):
+                        if f.endswith('.pptx') and not any(kw in f for kw in ["報告", "提案書", "上期", "成長戦略", "集客"]):
+                            template_path = os.path.join(current_dir, f)
+                            break
+
+                if not template_path:
+                    raise FileNotFoundError("『資料作成テンプレート_A4横.pptx』が見つかりません。")
+
+                prs = Presentation(template_path)
+                tpl_slide_count = len(prs.slides)
+                today_str = datetime.date.today().strftime("%Y/%m/%d")
+
+                # 1. 表紙スライド
                 cover_slide = duplicate_slide_safe(prs, 0)
                 cover_map = {
                     "[[資料タイトル]]": doc_title,
@@ -1239,7 +1730,7 @@ def run_quality_check(raw_memo, edited_chapters, doc_title):
                 }
                 process_slide_shapes(cover_slide, cover_map, is_cover=True)
 
-                # 2. 目次スライド（★安全な clean_chapter_title を適用★）
+                # 2. 目次スライド
                 index_slide = duplicate_slide_safe(prs, 1)
                 index_map = {}
                 for ch_idx, ch in enumerate(edited_chapters):
@@ -1277,7 +1768,6 @@ def run_quality_check(raw_memo, edited_chapters, doc_title):
 
                     should_draw_chart = (layout_type in ["line_chart", "bar_chart", "pie_chart"])
 
-                    # テンプレート割り当て
                     if layout_type == "step":
                         target_template_idx = 5 if tpl_slide_count > 5 else (3 if tpl_slide_count > 3 else 2)
                     elif layout_type == "checklist":
@@ -1340,13 +1830,11 @@ def run_quality_check(raw_memo, edited_chapters, doc_title):
                         is_cover=False
                     )
 
-                    # レイアウト別の整形
                     if layout_type == "step":
                         build_perfect_steps(ch_slide, step_descs, body_text_val, assigned_imgs, captions)
                     elif layout_type == "checklist":
                         format_checklist_slide(ch_slide, assigned_imgs, captions)
                     elif layout_type == "table":
-                        # ★動的行追加・列削除で全施策を完璧に整形★
                         format_table_and_note(ch_slide, total_width_pt=671.1, assigned_images=assigned_imgs, captions=captions, table_data=tbl_data)
                     elif should_draw_chart:
                         format_chart_slide_left_column(ch_slide)
@@ -1405,7 +1893,6 @@ def run_quality_check(raw_memo, edited_chapters, doc_title):
                                 chart.has_title = True
                                 chart.chart_title.text_frame.text = g_title_text
 
-                                # 円グラフ
                                 if is_pie:
                                     pie_palette = [
                                         RGBColor(217, 48, 37),   # 1. 赤
@@ -1441,7 +1928,6 @@ def run_quality_check(raw_memo, edited_chapters, doc_title):
                                     chart.legend.position = XL_LEGEND_POSITION.RIGHT
                                     chart.legend.include_in_layout = False
 
-                                # 棒グラフ
                                 elif is_bar:
                                     chart.has_legend = False
                                     plot = chart.plots[0]
@@ -1467,7 +1953,6 @@ def run_quality_check(raw_memo, edited_chapters, doc_title):
                                             val_ax.tick_labels.number_format = '0"%"'
                                             val_ax.tick_labels.number_format_is_linked = False
 
-                                # 折れ線グラフ
                                 else:
                                     chart.has_legend = False
                                     for s in chart.series:
@@ -1521,8 +2006,8 @@ def run_quality_check(raw_memo, edited_chapters, doc_title):
 
                 st.balloons()
                 st.success(f"🎉 『{download_filename}』の自動構築が完了しました！（全 {len(prs.slides)} ページ）")
-                
-                # ★【新設】AI品質チェック＆重要事項網羅性診断レポートの表示★
+
+                # AI品質チェック＆重要事項網羅性診断レポート
                 q_report = run_quality_check(raw_memo, edited_chapters, doc_title)
                 with st.expander("📊 **AI品質チェック＆網羅性診断レポート（自動検証結果）**", expanded=True):
                     st.markdown("元メモに記載された重要課題・施策が、資料内に確実に反映されているかを自動検証しました。")
