@@ -668,43 +668,89 @@ def format_checklist_slide(slide, assigned_images=None, captions=None):
         insert_slide_picture_safe(slide, assigned_images, captions, max_w_pt=340, max_h_pt=270, left_pt=430, top_pt=145)
 
 
-def apply_clean_table_borders(table):
+# ★ECMA-376 OpenXML正規スキーマ順序（lnL -> lnR -> lnT -> lnB -> solidFill）で
+# グレー罫線と1行おきのゼブラストライプ（白 ＆ 少し濃い薄いグレー）を適用★
+def apply_clean_table_borders_and_stripes(table):
     ns_a = nsdecls("a")
-    border_dark = "02182E"
-    border_light = "808C99"
-
     tbl_el = table._tbl
+
+    tblPr = tbl_el.tblPr
+    if tblPr is not None:
+        tblPr.attrib['firstRow'] = '1'
+        tblPr.attrib['firstCol'] = '0'
+        tblPr.attrib['lastRow'] = '0'
+        tblPr.attrib['lastCol'] = '0'
+        tblPr.attrib['bandRow'] = '1'
+        tblPr.attrib['bandCol'] = '0'
+
+    header_bg = "677482"       # ヘッダー背景（スレートグレー）
+    row_even_bg = "FFFFFF"     # データ1, 3, 5行目：白
+    row_odd_bg = "E8ECEF"      # データ2, 4行目：少し濃い薄いグレー（1行おき）
+
+    border_header_sep = "FFFFFF"  # ヘッダー内の縦仕切り線
+    border_gray = "B8C0C8"        # 背景が薄い部分のグレー罫線
+    border_outer = "677482"       # 外枠・ヘッダー下の線
+
     trs = tbl_el.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}tr')
+    num_rows = len(trs)
 
     for r_idx, tr in enumerate(trs):
         is_header = (r_idx == 0)
-        is_last_row = (r_idx == len(trs) - 1)
+        is_last_row = (r_idx == num_rows - 1)
         tcs = tr.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}tc')
+        num_cols = len(tcs)
+
+        if is_header:
+            bg_color = header_bg
+        elif r_idx % 2 == 1:
+            bg_color = row_even_bg
+        else:
+            bg_color = row_odd_bg
 
         for c_idx, tc in enumerate(tcs):
             is_first_col = (c_idx == 0)
-            is_last_col = (c_idx == len(tcs) - 1)
+            is_last_col = (c_idx == num_cols - 1)
+
             tcPr = tc.get_or_add_tcPr()
+            anchor_attr = tcPr.attrib.get('anchor', 'ctr')
+            for child in list(tcPr):
+                tcPr.remove(child)
+            tcPr.attrib['anchor'] = anchor_attr
 
-            for b_tag in ['lnL', 'lnR', 'lnT', 'lnB', 'lnTlToBr', 'lnBlToTr']:
-                old_b = tcPr.find(f'{{http://schemas.openxmlformats.org/drawingml/2006/main}}{b_tag}')
-                if old_b is not None:
-                    tcPr.remove(old_b)
+            # 1. lnL (左線)
+            l_clr = border_outer if is_first_col else (border_header_sep if is_header else border_gray)
+            tcPr.append(parse_xml(
+                f'<a:lnL {ns_a} w="12700" cap="flat" cmpd="sng" algn="ctr">'
+                f'<a:solidFill><a:srgbClr val="{l_clr}"/></a:solidFill><a:prstDash val="solid"/></a:lnL>'
+            ))
 
-            if is_header:
-                tcPr.append(parse_xml(f'<a:lnT {ns_a} w="19050" cmpd="sng"><a:solidFill><a:srgbClr val="{border_dark}"/></a:solidFill></a:lnT>'))
-            else:
-                tcPr.append(parse_xml(f'<a:lnT {ns_a} w="12700" cmpd="sng"><a:solidFill><a:srgbClr val="{border_light}"/></a:solidFill></a:lnT>'))
+            # 2. lnR (右線)
+            r_clr = border_outer if is_last_col else (border_header_sep if is_header else border_gray)
+            tcPr.append(parse_xml(
+                f'<a:lnR {ns_a} w="12700" cap="flat" cmpd="sng" algn="ctr">'
+                f'<a:solidFill><a:srgbClr val="{r_clr}"/></a:solidFill><a:prstDash val="solid"/></a:lnR>'
+            ))
 
-            if is_header:
-                tcPr.append(parse_xml(f'<a:lnB {ns_a} w="25400" cmpd="sng"><a:solidFill><a:srgbClr val="{border_dark}"/></a:solidFill></a:lnB>'))
-            elif is_last_row:
-                tcPr.append(parse_xml(f'<a:lnB {ns_a} w="19050" cmpd="sng"><a:solidFill><a:srgbClr val="{border_dark}"/></a:solidFill></a:lnB>'))
-            else:
-                tcPr.append(parse_xml(f'<a:lnB {ns_a} w="12700" cmpd="sng"><a:solidFill><a:srgbClr val="{border_light}"/></a:solidFill></a:lnB>'))
+            # 3. lnT (上線)
+            t_clr = border_outer if (is_header or r_idx == 1) else border_gray
+            t_w = "19050" if r_idx == 1 else "12700"
+            tcPr.append(parse_xml(
+                f'<a:lnT {ns_a} w="{t_w}" cap="flat" cmpd="sng" algn="ctr">'
+                f'<a:solidFill><a:srgbClr val="{t_clr}"/></a:solidFill><a:prstDash val="solid"/></a:lnT>'
+            ))
 
-            tcPr.append(parse_xml(f'<a:lnL {ns_a} w="12700" cmpd="sng"><a:solidFill><a:srgbClr val="{border_dark if is_first_col else border_light}"/></a:solidFill></a:lnL>'))
-            tcPr.append(parse_xml(f'<a:lnR {ns_a} w="12700" cmpd="sng"><a:solidFill><a:srgbClr val="{border_dark if is_last_col else border_light}"/></a:solidFill></a:lnR>'))
+            # 4. lnB (下線)
+            b_clr = border_outer if (is_header or is_last_row) else border_gray
+            b_w = "19050" if is_header else "12700"
+            tcPr.append(parse_xml(
+                f'<a:lnB {ns_a} w="{b_w}" cap="flat" cmpd="sng" algn="ctr">'
+                f'<a:solidFill><a:srgbClr val="{b_clr}"/></a:solidFill><a:prstDash val="solid"/></a:lnB>'
+            ))
+
+            # 5. solidFill (背景塗りつぶし - ボーダーの後に配置)
+            tcPr.append(parse_xml(
+                f'<a:solidFill {ns_a}><a:srgbClr val="{bg_color}"/></a:solidFill>'
+            ))
 
 
 def format_table_and_note(slide, total_width_pt=671.1, assigned_images=None, captions=None, table_data=None):
@@ -789,21 +835,33 @@ def format_table_and_note(slide, total_width_pt=671.1, assigned_images=None, cap
             table.columns[c].width = int(Pt(col_w))
 
         font_sz = Pt(9.0) if (len(table.rows) >= 6 or has_image) else Pt(10.0)
-        for row in table.rows:
-            for cell in row.cells:
+        for r_idx, row in enumerate(table.rows):
+            for c_idx, cell in enumerate(row.cells):
                 cell.text_frame.word_wrap = True
-                cell.text_frame.margin_left = Pt(6)
-                cell.text_frame.margin_right = Pt(6)
-                cell.text_frame.margin_top = Pt(4)
-                cell.text_frame.margin_bottom = Pt(4)
+                cell.text_frame.margin_left = Pt(8)
+                cell.text_frame.margin_right = Pt(8)
+                cell.text_frame.margin_top = Pt(5)
+                cell.text_frame.margin_bottom = Pt(5)
                 for p in cell.text_frame.paragraphs:
                     p.font.name = "メイリオ"
                     p.font.size = font_sz
+                    if r_idx == 0:
+                        p.font.bold = True
+                        p.font.color.rgb = RGBColor(255, 255, 255)
+                    else:
+                        p.font.bold = (c_idx == 0)
+                        p.font.color.rgb = RGBColor(2, 24, 46)
                     for r in p.runs:
                         r.font.name = "メイリオ"
                         r.font.size = font_sz
+                        if r_idx == 0:
+                            r.font.bold = True
+                            r.font.color.rgb = RGBColor(255, 255, 255)
+                        else:
+                            r.font.bold = (c_idx == 0)
+                            r.font.color.rgb = RGBColor(2, 24, 46)
 
-        apply_clean_table_borders(table)
+        apply_clean_table_borders_and_stripes(table)
 
     if tbl_shape and note_shape:
         note_shape.left = Pt(113.7)
