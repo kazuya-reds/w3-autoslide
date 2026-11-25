@@ -84,7 +84,6 @@ def parse_number_with_comma(val):
     s = str(val).strip()
     if not s:
         return 0.0
-    # 「1億5,000万円」などの表現にも対応
     oku_match = re.search(r'(\d+(?:,\d{3})*(?:\.\d+)?)\s*億\s*(\d+(?:,\d{3})*(?:\.\d+)?)?\s*万?', s)
     if oku_match:
         oku = float(oku_match.group(1).replace(",", ""))
@@ -162,6 +161,8 @@ def sanitize_main_item(main_item, clean_ch_title):
         else:
             if "推移" in clean_ch_title or "売上" in clean_ch_title:
                 main_item = "売上実績は堅調に推移"
+            elif "チャネル" in clean_ch_title or "販売経路" in clean_ch_title:
+                main_item = "自社EC依存とモール拡大"
             elif "要因" in clean_ch_title or "分析" in clean_ch_title or "顧客" in clean_ch_title or "構成" in clean_ch_title:
                 main_item = "分析結果の主要ポイント"
             elif "アクション" in clean_ch_title or "手順" in clean_ch_title or "戦略" in clean_ch_title or "施策" in clean_ch_title or "目標" in clean_ch_title:
@@ -850,7 +851,7 @@ def apply_clean_table_borders_and_stripes(table):
 def format_table_and_note(slide, total_width_pt=671.1, assigned_images=None, captions=None, table_data=None):
     wipe_right_side_shapes(slide)
     has_image = bool(assigned_images and len(assigned_images) > 0)
-    actual_width = Pt(320.0) if has_image else Pt(total_width_pt)
+    actual_width_pt = 320.0 if has_image else float(total_width_pt)
     tbl_shape = None
     note_shape = None
 
@@ -873,65 +874,31 @@ def format_table_and_note(slide, total_width_pt=671.1, assigned_images=None, cap
             pass
 
     if tbl_shape and table_data and isinstance(table_data, dict):
-        table = tbl_shape.table
         tbl_shape.left = Pt(113.7)
         tbl_shape.top = Pt(145.0)
+        tbl_shape.width = Pt(actual_width_pt)
 
         headers = table_data.get("headers", [])
         rows = table_data.get("rows", [])
 
-        # 全行から最大列数を算出し、入力された列項目を絶対に省略しない
         max_row_cols = max([len(r) for r in rows if isinstance(r, list)] + [0])
         target_cols = max(1, len(headers), max_row_cols)
 
-        # ヘッダーが不足している場合は補完
         while len(headers) < target_cols:
             headers.append(f"項目{len(headers) + 1}")
 
         target_rows = max(1, len(rows)) + 1
-        tbl_el = table._tbl
 
-        # 1. 不足している列をXMLレベルで動的追加
-        while len(table.columns) < target_cols:
-            tblGrid = tbl_el.tblGrid
-            sample_w = tblGrid.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}gridCol')[-1].attrib.get('w', '1500000')
-            tblGrid.append(parse_xml(f'<a:gridCol {nsdecls("a")} w="{sample_w}"/>'))
-            for tr in tbl_el.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}tr'):
-                last_tc = tr.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}tc')[-1]
-                new_tc = copy.deepcopy(last_tc)
-                for p in new_tc.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}txBody/{http://schemas.openxmlformats.org/drawingml/2006/main}p'):
-                    for r in p.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}r'):
-                        t = r.find('{http://schemas.openxmlformats.org/drawingml/2006/main}t')
-                        if t is not None:
-                            t.text = ""
-                tr.append(new_tc)
+        # 既存の表要素を一旦削除し、正確な列数・行数で新規生成することで青色残骸やはみ出しを完全防止
+        spTree = slide.shapes._spTree
+        old_tbl_el = tbl_shape._element
+        old_tbl_el.getparent().remove(old_tbl_el)
 
-        # 2. 余分な列をXMLレベルで物理削除
-        while len(table.columns) > target_cols:
-            col_to_remove = len(table.columns) - 1
-            tblGrid = tbl_el.tblGrid
-            gridCols = tblGrid.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}gridCol')
-            if col_to_remove < len(gridCols):
-                tblGrid.remove(gridCols[col_to_remove])
-            for tr in tbl_el.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}tr'):
-                tcs = tr.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}tc')
-                if col_to_remove < len(tcs):
-                    tr.remove(tcs[col_to_remove])
+        new_tbl_shape = slide.shapes.add_table(target_rows, target_cols, Pt(113.7), Pt(145.0), Pt(actual_width_pt), Pt(220.0))
+        new_tbl_shape.name = "表_整形済"
+        table = new_tbl_shape.table
+        tbl_shape = new_tbl_shape
 
-        # 3. 不足している行をXMLレベルで動的追加
-        while len(table.rows) < target_rows:
-            trs = tbl_el.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}tr')
-            last_tr = trs[-1]
-            new_tr = copy.deepcopy(last_tr)
-            for tc in new_tr.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}tc'):
-                for p in tc.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}txBody/{http://schemas.openxmlformats.org/drawingml/2006/main}p'):
-                    for r in p.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}r'):
-                        t = r.find('{http://schemas.openxmlformats.org/drawingml/2006/main}t')
-                        if t is not None:
-                            t.text = ""
-            tbl_el.append(new_tr)
-
-        # 4. データを流し込み
         for c_idx, h_text in enumerate(headers[:target_cols]):
             table.rows[0].cells[c_idx].text = str(h_text)
 
@@ -942,21 +909,20 @@ def format_table_and_note(slide, total_width_pt=671.1, assigned_images=None, cap
                     val = row_items[c_idx] if c_idx < len(row_items) else ""
                     table.rows[target_r_idx].cells[c_idx].text = str(val)
 
-        # 5. 列幅配分（合計を actual_width 内に収める）
         if target_cols == 3:
             proportions = [0.22, 0.38, 0.40]
         elif target_cols == 4:
-            proportions = [0.20, 0.30, 0.30, 0.20]
+            proportions = [0.24, 0.24, 0.26, 0.26]
         elif target_cols == 5:
-            proportions = [0.16, 0.24, 0.20, 0.20, 0.20]
+            proportions = [0.20, 0.24, 0.18, 0.20, 0.18]
         else:
             proportions = [1.0 / target_cols] * target_cols
 
         for c in range(len(table.columns)):
-            col_w = (actual_width.pt) * proportions[c]
+            col_w = actual_width_pt * proportions[c]
             table.columns[c].width = int(Pt(col_w))
 
-        font_sz = Pt(8.5) if (len(table.rows) >= 6 or target_cols >= 5 or has_image) else Pt(10.0)
+        font_sz = Pt(8.5) if (len(table.rows) >= 6 or target_cols >= 5 or has_image) else Pt(9.5)
         for r_idx, row in enumerate(table.rows):
             for c_idx, cell in enumerate(row.cells):
                 cell.text_frame.word_wrap = True
@@ -988,7 +954,7 @@ def format_table_and_note(slide, total_width_pt=671.1, assigned_images=None, cap
     if tbl_shape and note_shape:
         note_shape.left = Pt(113.7)
         note_shape.top = int(tbl_shape.top + tbl_shape.height + Pt(14.0))
-        note_shape.width = actual_width
+        note_shape.width = Pt(actual_width_pt)
         if note_shape.has_text_frame:
             for p in note_shape.text_frame.paragraphs:
                 p.font.name = "メイリオ"
@@ -1244,70 +1210,87 @@ def format_text_or_image_slide_layout(slide, assigned_images, captions=None):
         insert_slide_picture_safe(slide, assigned_images, captions, max_w_pt=360, max_h_pt=300, left_pt=390, top_pt=130)
 
 
-def format_and_align_index_slide(slide):
-    title_shapes = {}
-    page_shapes = {}
-
+# ★目次スライド：全項目（01〜）を同一フォント・同一行間・同一位置で整列★
+def build_clean_index_slide(slide, edited_chapters):
+    shapes_to_remove = []
     for shp in slide.shapes:
+        if shp.top > Pt(500) and shp.left > Pt(500):
+            continue
+        if shp.is_placeholder and shp.placeholder_format.type == PP_PLACEHOLDER.SLIDE_NUMBER:
+            continue
         sname = shp.name.upper()
-        for k in range(1, 15):
-            if f"INDEX_{k}_TITLE" in sname:
-                title_shapes[k] = shp
-            elif f"INDEX_{k}_PAGE" in sname:
-                page_shapes[k] = shp
+        if "INDEX_" in sname:
+            shapes_to_remove.append(shp)
+        elif shp.has_text_frame and ("[[" in shp.text_frame.text or re.match(r'^\d{2}\s', shp.text_frame.text.strip())):
+            shapes_to_remove.append(shp)
 
-    max_title_right = Pt(460.0)
+    for shp in shapes_to_remove:
+        try:
+            sp = shp._element
+            sp.getparent().remove(sp)
+        except Exception:
+            pass
 
-    for k in range(1, 15):
-        if k in title_shapes:
-            t_shp = title_shapes[k]
-            if t_shp.has_text_frame and t_shp.text_frame.text.strip():
-                txt = t_shp.text_frame.text.strip()
-                t_shp.text_frame.word_wrap = False
-                t_shp.width = Pt(340.0)
+    num_items = len(edited_chapters)
+    # 項目数に応じて開始Y座標と行間隔を自動調整し、画面内に美しく収める
+    if num_items <= 6:
+        start_y_pt = 220.0
+        step_y_pt = 38.5
+        font_sz_pt = 18.0
+    else:
+        start_y_pt = 195.0
+        step_y_pt = min(36.0, 270.0 / max(1, num_items))
+        font_sz_pt = 15.5
 
-                p = t_shp.text_frame.paragraphs[0]
-                m = re.match(r'^(\d{2})\s*(.*)$', txt)
-                if m:
-                    num_str = m.group(1)
-                    title_str = m.group(2)
-                    p.text = ""
+    title_x = Pt(210.0)
+    page_x = Pt(610.0)
 
-                    r0 = p.add_run()
-                    r0.text = f"{num_str} "
-                    r0.font.name = "メイリオ"
-                    r0.font.size = Pt(18.0)
-                    r0.font.bold = True
-                    r0.font.color.rgb = RGBColor(217, 48, 37)
+    for idx, ch in enumerate(edited_chapters):
+        ch_num_str = f"{idx + 1:02d}"
+        ch_page_num = idx + 2
+        clean_title = clean_chapter_title(ch.get("chapter_title", f"章{idx+1}"))
+        row_y = Pt(start_y_pt + idx * step_y_pt)
 
-                    r1 = p.add_run()
-                    r1.text = title_str
-                    r1.font.name = "メイリオ"
-                    r1.font.size = Pt(18.0)
-                    r1.font.bold = True
+        t_box = slide.shapes.add_textbox(title_x, row_y, Pt(390.0), Pt(step_y_pt))
+        t_box.name = f"INDEX_{idx+1}_TITLE"
+        tf_t = t_box.text_frame
+        tf_t.word_wrap = False
+        tf_t.margin_left = Pt(4)
+        tf_t.margin_right = Pt(4)
+        tf_t.margin_top = Pt(2)
+        tf_t.margin_bottom = Pt(2)
+        p_t = tf_t.paragraphs[0]
 
-                calc_w = 0
-                for c in txt:
-                    calc_w += 18.5 if ord(c) > 127 else 10.0
-                calc_right = t_shp.left + Pt(calc_w)
-                if calc_right > max_title_right:
-                    max_title_right = calc_right
+        r0 = p_t.add_run()
+        r0.text = f"{ch_num_str} "
+        r0.font.name = "メイリオ"
+        r0.font.size = Pt(font_sz_pt)
+        r0.font.bold = True
+        r0.font.color.rgb = RGBColor(217, 48, 37)
 
-    page_left_pos = max(Pt(550.0), int(max_title_right + Pt(25.0)))
+        r1 = p_t.add_run()
+        r1.text = clean_title
+        r1.font.name = "メイリオ"
+        r1.font.size = Pt(font_sz_pt)
+        r1.font.bold = True
+        r1.font.color.rgb = RGBColor(2, 24, 46)
 
-    for k in range(1, 15):
-        if k in page_shapes:
-            p_shp = page_shapes[k]
-            if p_shp.has_text_frame and p_shp.text_frame.text.strip():
-                p_shp.left = page_left_pos
-                p_shp.width = Pt(70.0)
-                p_shp.text_frame.word_wrap = False
-                for p in p_shp.text_frame.paragraphs:
-                    p.alignment = PP_ALIGN.LEFT
-                    for r in p.runs:
-                        r.font.name = "メイリオ"
-                        r.font.size = Pt(18.0)
-                        r.font.bold = True
+        p_box = slide.shapes.add_textbox(page_x, row_y, Pt(80.0), Pt(step_y_pt))
+        p_box.name = f"INDEX_{idx+1}_PAGE"
+        tf_p = p_box.text_frame
+        tf_p.word_wrap = False
+        tf_p.margin_left = Pt(4)
+        tf_p.margin_right = Pt(4)
+        tf_p.margin_top = Pt(2)
+        tf_p.margin_bottom = Pt(2)
+        p_p = tf_p.paragraphs[0]
+        p_p.alignment = PP_ALIGN.LEFT
+        r_p = p_p.add_run()
+        r_p.text = f"P{ch_page_num}"
+        r_p.font.name = "メイリオ"
+        r_p.font.size = Pt(font_sz_pt)
+        r_p.font.bold = True
+        r_p.font.color.rgb = RGBColor(2, 24, 46)
 
 
 def format_chapter_title_paragraph(p, ch_num, ch_title):
@@ -1364,7 +1347,7 @@ def process_paragraph_runs(p, replace_map, chapter_num=None, chapter_title=None,
                 r.font.name = "メイリオ"
 
 
-def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=None, is_cover=False, is_index=False):
+def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=None, is_cover=False):
     shapes_to_remove = []
 
     notice_val = replace_map.get("[[注意文]]", "") or replace_map.get("[[補足文]]", "")
@@ -1620,13 +1603,23 @@ with col_btn1:
                     【入力データ】
                     {json.dumps(prompt_data, ensure_ascii=False, indent=2)}
 
+                    【グラフ・表の自動選択ルール】
+                    - "line_chart": 月別売上推移（1月〜6月）など時系列推移
+                    - "pie_chart": カテゴリー別売上構成（生活雑貨35%等）、顧客年代構成、販売チャネル別構成比（自社EC55%・楽天市場25%・Amazon15%・その他5%）など、割合・内訳を示すスライドは必ず "pie_chart" を選定してください。
+                    - "bar_chart": 項目別の数値比較
+                    - "table": 商品別販売実績（商品A〜E）、キャンペーン実績比較、5大販売戦略などの比較表・一覧表
+                    - "step": 実行ステップやロードマップ
+                    - "checklist": 現状の課題や確認事項一覧
+                    - "text": 経営方針・2027年度目標・まとめなどの解説スライド
+
                     【必須ルール】
-                    1. 商品別販売実績の表（table）では、列見出しに ["商品名", "商品詳細", "販売数量", "売上高", "利益率"] を含め、商品A〜Eの5行すべてを省略せず出力してください。カンマ区切り数値（4,200、1,400万円など）はそのまま保持してください。
-                    2. キャンペーン実績比較の表（table）では、列見出しに ["キャンペーン名", "実施期間", "広告費", "売上高", "新規顧客"] を含め、3キャンペーンすべてを出力してください。
-                    3. 5大販売戦略の表（table）では、①〜⑤の5戦略すべてを出力してください。
-                    4. 2027年度目標（年間売上目標1億5,000万円、新規顧客数年間8,000人、リピート購入率20%→30%、自社EC以外構成比45%）を必ずスライドに含めてください。
-                    5. "step" の "step_descs" には先頭に「①」「1.」「STEP 1」などの番号記号を付けないでください。
-                    6. "main_item" は15文字以内の短いキャッチコピーにしてください。
+                    1. 販売チャネル別構成比（自社EC55%、楽天市場25%、Amazon15%、その他5%）は独立したスライド（"pie_chart"）として必ず作成し、課題スライドと混同しないでください。
+                    2. カテゴリー別売上構成のスライドも "pie_chart" を選定してください。
+                    3. 商品別販売実績の表（table）では、列見出しに ["商品名", "商品詳細", "販売数量", "売上高", "利益率"] を含め、商品A〜Eの5行すべてを省略せず出力してください。カンマ区切り数値（4,200、1,400万円など）はそのまま保持してください。
+                    4. キャンペーン実績比較の表（table）では、列見出しに ["キャンペーン名", "実施期間", "広告費", "売上高", "新規顧客"] を含め、3キャンペーンすべてを出力してください。
+                    5. 2027年度目標（年間売上目標1億5,000万円、新規顧客数年間8,000人、リピート購入率20%→30%、自社EC以外構成比45%）を必ずスライドに含めてください。
+                    6. "step" の "step_descs" には先頭に「①」「1.」「STEP 1」などの番号記号を付けないでください。
+                    7. "main_item" は15文字以内の短いキャッチコピーにしてください。
 
                     【出力形式】
                     純粋なJSONのみを出力してください。
@@ -1750,7 +1743,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         s_descs = b_steps[:4]
                 if not isinstance(s_descs, list) or len(s_descs) < 4:
                     s_descs = [
-                        "リピーター獲得：購入後メール配信・会員限定クーポン・ポイント制度見直し",
+                        "リピーター獲得：購入後フォローメール配信・会員限定クーポン・ポイント制度見直し",
                         "商品戦略：高利益率な商品C（利益率40%）の販売強化と商品Aとのセット販売検討",
                         "販売チャネル拡大：楽天市場・Amazonの商品ページ改善と広告運用強化",
                         "SNS販促・効果測定：Instagramでの活用シーン・レビュー発信とキャンペーンROAS検証"
@@ -1922,45 +1915,9 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 }
                 process_slide_shapes(cover_slide, cover_map, is_cover=True)
 
-                # 2. 目次スライド（全章を漏れなく反映）
+                # 2. 目次スライド（全章を統一スタイル・整列で描画）
                 index_slide = duplicate_slide_safe(prs, 1)
-                index_map = {}
-                for ch_idx, ch in enumerate(edited_chapters):
-                    ch_num_str = f"{ch_idx + 1:02d}"
-                    ch_page_num = ch_idx + 2
-                    raw_ch_title = ch.get("chapter_title", f"章{ch_idx+1}")
-                    clean_ch_title = clean_chapter_title(raw_ch_title)
-
-                    index_map[f"[[章{ch_idx+1}タイトル]]"] = f"{ch_num_str} {clean_ch_title}"
-                    index_map[f"P[[章{ch_idx+1}ページ]]"] = f"P{ch_page_num}"
-                    index_map[f"[[章{ch_idx+1}ページ]]"] = str(ch_page_num)
-
-                for k in range(len(edited_chapters) + 1, 15):
-                    index_map[f"[[章{k}タイトル]]"] = ""
-                    index_map[f"P[[章{k}ページ]]"] = ""
-                    index_map[f"[[章{k}ページ]]"] = ""
-
-                process_slide_shapes(index_slide, index_map, is_index=True)
-
-                # テンプレート目次枠数を超える章がある場合、目次スライドに追加行を印字
-                max_tpl_index_slots = 6
-                if len(edited_chapters) > max_tpl_index_slots:
-                    extra_chapters = edited_chapters[max_tpl_index_slots:]
-                    extra_box = index_slide.shapes.add_textbox(Pt(240.7), Pt(448.0), Pt(420.0), Pt(100.0))
-                    tf_ex = extra_box.text_frame
-                    tf_ex.word_wrap = True
-                    for ex_i, ex_ch in enumerate(extra_chapters):
-                        ex_num = f"{max_tpl_index_slots + ex_i + 1:02d}"
-                        ex_page = max_tpl_index_slots + ex_i + 2
-                        ex_title = clean_chapter_title(ex_ch.get("chapter_title", ""))
-                        p_ex = tf_ex.add_paragraph() if ex_i > 0 else tf_ex.paragraphs[0]
-                        p_ex.text = f"{ex_num} {ex_title}    P{ex_page}"
-                        p_ex.font.name = "メイリオ"
-                        p_ex.font.size = Pt(14.0)
-                        p_ex.font.bold = True
-                        p_ex.font.color.rgb = RGBColor(2, 24, 46)
-
-                format_and_align_index_slide(index_slide)
+                build_clean_index_slide(index_slide, edited_chapters)
 
                 inserted_image_report = []
                 chart_audit_report = []
@@ -1977,6 +1934,11 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     assigned_imgs = [active_images[i] for i in img_indices if i < len(active_images)]
                     captions = ch.get("image_captions", [])
                     raw_chart_info = ch.get("chart_info")
+
+                    # 構成比・チャネル系は円グラフを優先適用
+                    if layout_type not in ["line_chart", "bar_chart", "pie_chart", "step", "checklist", "table"]:
+                        if any(kw in clean_ch_title for kw in ["カテゴリー", "カテゴリ", "年代", "チャネル", "販売経路"]):
+                            layout_type = "pie_chart"
 
                     should_draw_chart = (layout_type in ["line_chart", "bar_chart", "pie_chart"])
 
@@ -2017,7 +1979,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                             step_descs = b_steps[:4]
                     if not isinstance(step_descs, list) or len(step_descs) < 4:
                         step_descs = [
-                            "リピーター獲得：購入後メール配信・会員限定クーポン・ポイント制度見直し",
+                            "リピーター獲得：購入後フォローメール配信・会員限定クーポン・ポイント制度見直し",
                             "商品戦略：高利益率な商品C（利益率40%）の販売強化と商品Aとのセット販売検討",
                             "販売チャネル拡大：楽天市場・Amazonの商品ページ改善と広告運用強化",
                             "SNS販促・効果測定：Instagramでの活用シーン・レビュー発信とキャンペーンROAS検証"
@@ -2079,8 +2041,8 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                             chart_data.add_series(series_name, values)
 
                             try:
-                                is_pie = ("pie" in layout_type or "円" in clean_ch_title)
-                                is_bar = ("bar" in layout_type or "棒" in clean_ch_title)
+                                is_pie = ("pie" in layout_type or "円" in clean_ch_title or any(kw in clean_ch_title for kw in ["構成", "チャネル", "年代"]))
+                                is_bar = ("bar" in layout_type or "棒" in clean_ch_title) and not is_pie
 
                                 if is_pie:
                                     c_type = XL_CHART_TYPE.PIE
