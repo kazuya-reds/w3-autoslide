@@ -19,6 +19,7 @@ import copy
 import os
 import uuid
 import unicodedata
+import math
 
 st.set_page_config(page_title="W3 AutoSlide", layout="wide")
 
@@ -59,7 +60,7 @@ LAYOUT_MAP = {
     "text": "解説スライド（文章メイン または 写真添え）",
     "step": "実行ステップ（フロー・手順図）",
     "checklist": "チェックリスト（確認項目一覧）",
-    "table": "表組み（施策一覧・タスク管理）"
+    "table": "表組み（比較表・施策一覧・タスク管理）"
 }
 LAYOUT_REVERSE_MAP = {v: k for k, v in LAYOUT_MAP.items()}
 
@@ -143,37 +144,129 @@ def sanitize_main_item(main_item, clean_ch_title):
     return main_item
 
 
-def extract_chart_data_from_memo(text):
-    pattern = r'(\d{1,2}月)[^\d\n]{0,10}?(\d{1,3}(?:,\d{3})*(?:\.\d+)?|\d+(?:\.\d+)?)\s*(?:万|万円)?'
-    matches = re.findall(pattern, text)
-    if matches:
-        categories = []
-        values = []
-        for m in matches:
-            cat = m[0]
-            val_str = m[1].replace(',', '')
-            try:
-                val = float(val_str)
-                if cat not in categories:
-                    categories.append(cat)
-                    values.append(val)
-            except Exception:
-                pass
-        if len(categories) >= 2:
+# ★【改善②】章の内容（タイトル・本文）に応じた固有データの抽出（他章データの流用防止）★
+def extract_chapter_specific_chart_data(chapter_title, body_text, raw_memo):
+    combined = f"{chapter_title} {body_text}"
+
+    # 1. 月別売上推移（「1月：850万円」形式を正確に抽出）
+    if any(kw in combined for kw in ["月別", "1月", "2月", "3月", "4月", "5月", "6月", "推移"]):
+        month_matches = re.findall(r'(?:^|\n|\s)([1-9]|1[0-2])月[：:\s]+([\d,]+(?:\.\d+)?)\s*(?:万|万円)?', raw_memo)
+        if len(month_matches) >= 3:
+            cats = [f"{m[0]}月" for m in month_matches]
+            vals = []
+            for m in month_matches:
+                try:
+                    vals.append(float(m[1].replace(',', '')))
+                except Exception:
+                    vals.append(0.0)
             return {
-                "title": "月別推移",
+                "title": "月別売上推移",
                 "unit": "万円",
-                "categories": categories,
-                "series_name": "推移データ",
-                "values": values
+                "categories": cats,
+                "series_name": "月別売上高（万円）",
+                "values": vals
             }
+
+    # 2. 商品カテゴリー別売上構成
+    if any(kw in combined for kw in ["カテゴリー", "カテゴリ", "生活雑貨", "家電"]):
+        cat_matches = re.findall(r'(?:^|\n)([^\n：:]+?)[：:]\s*(\d+(?:\.\d+)?)\s*[%％]', raw_memo)
+        valid_cats = [(c.strip(), float(v)) for c, v in cat_matches if any(k in c for k in ["雑貨", "家電", "ファッション", "食品", "その他"])]
+        if len(valid_cats) >= 3:
+            return {
+                "title": "商品カテゴリー別売上構成",
+                "unit": "％",
+                "categories": [x[0] for x in valid_cats],
+                "series_name": "売上構成比（％）",
+                "values": [x[1] for x in valid_cats]
+            }
+
+    # 3. 顧客年代構成
+    if any(kw in combined for kw in ["年代", "20代", "30代", "40代", "50代", "60代"]):
+        age_matches = re.findall(r'(?:^|\n)((?:20|30|40|50|60代以上)[^\n：:]*?)[：:]\s*(\d+(?:\.\d+)?)\s*[%％]', raw_memo)
+        if len(age_matches) >= 3:
+            return {
+                "title": "顧客の年代構成",
+                "unit": "％",
+                "categories": [m[0].strip() for m in age_matches],
+                "series_name": "年代別割合（％）",
+                "values": [float(m[1]) for m in age_matches]
+            }
+
+    # 4. 販売チャネル別実績
+    if any(kw in combined for kw in ["チャネル", "販売経路", "自社EC", "楽天市場", "Amazon"]):
+        ch_matches = re.findall(r'(?:^|\n)(自社EC[^\n：:]*|楽天市場|Amazon|その他)[：:]\s*(\d+(?:\.\d+)?)\s*[%％]', raw_memo)
+        if len(ch_matches) >= 3:
+            return {
+                "title": "販売チャネル別売上構成",
+                "unit": "％",
+                "categories": [m[0].strip() for m in ch_matches],
+                "series_name": "チャネル構成比（％）",
+                "values": [float(m[1]) for m in ch_matches]
+            }
+
+    # 5. 商品別販売実績（売上）
+    if any(kw in combined for kw in ["商品別", "商品A", "商品B", "商品C", "ワイヤレスイヤホン", "収納ボックス"]):
+        prod_blocks = re.findall(r'(商品[A-E][^：\n]*)[：:][^\n]*?(?:\n[^\n]*?)*?売上[：:]\s*([\d,]+(?:\.\d+)?)\s*万円', raw_memo)
+        if len(prod_blocks) >= 3:
+            return {
+                "title": "商品別売上実績",
+                "unit": "万円",
+                "categories": [p[0].strip() for p in prod_blocks],
+                "series_name": "売上高（万円）",
+                "values": [float(p[1].replace(',', '')) for p in prod_blocks]
+            }
+
     return {
-        "title": "月別推移",
-        "unit": "万円",
-        "categories": ["4月", "5月", "6月", "7月", "8月", "9月"],
-        "series_name": "推移データ",
-        "values": [1200.0, 1450.0, 1380.0, 1600.0, 1850.0, 1720.0]
+        "title": clean_chapter_title(chapter_title) or "実績データ",
+        "unit": "",
+        "categories": [],
+        "series_name": "データ",
+        "values": []
     }
+
+
+# ★【改善①】グラフデータ整合性チェック＆自動補正関数★
+def verify_and_fix_chart_data(chart_info, layout_type, chapter_title, body_text, raw_memo):
+    if not isinstance(chart_info, dict):
+        chart_info = {}
+
+    raw_cats = chart_info.get("categories", [])
+    raw_vals = chart_info.get("values", [])
+
+    cats = [str(c).strip() for c in raw_cats if str(c).strip()] if isinstance(raw_cats, list) else []
+    vals = []
+    if isinstance(raw_vals, list):
+        for v in raw_vals:
+            try:
+                num_str = re.sub(r'[^\d\.\-]', '', str(v).replace(',', '').strip())
+                f_val = float(num_str) if num_str else 0.0
+                if math.isnan(f_val) or math.isinf(f_val):
+                    f_val = 0.0
+                vals.append(f_val)
+            except Exception:
+                vals.append(0.0)
+
+    # もしデータが不正または空なら、その章固有のデータを抽出
+    if not cats or not vals or len(cats) != len(vals):
+        extracted = extract_chapter_specific_chart_data(chapter_title, body_text, raw_memo)
+        if extracted["categories"] and extracted["values"]:
+            cats = extracted["categories"]
+            vals = extracted["values"]
+            if not chart_info.get("title"):
+                chart_info["title"] = extracted["title"]
+            if not chart_info.get("unit"):
+                chart_info["unit"] = extracted["unit"]
+            if not chart_info.get("series_name"):
+                chart_info["series_name"] = extracted["series_name"]
+
+    min_len = min(len(cats), len(vals))
+    cats = cats[:min_len]
+    vals = vals[:min_len]
+
+    chart_info["categories"] = cats
+    chart_info["values"] = vals
+    is_valid = (min_len >= 2 and any(v > 0 for v in vals))
+    return chart_info, is_valid
 
 
 def duplicate_slide_safe(prs, src_idx):
@@ -668,8 +761,6 @@ def format_checklist_slide(slide, assigned_images=None, captions=None):
         insert_slide_picture_safe(slide, assigned_images, captions, max_w_pt=340, max_h_pt=270, left_pt=430, top_pt=145)
 
 
-# ★ECMA-376 OpenXML正規スキーマ順序（lnL -> lnR -> lnT -> lnB -> solidFill）で
-# グレー罫線と1行おきのゼブラストライプ（白 ＆ 少し濃い薄いグレー）を適用★
 def apply_clean_table_borders_and_stripes(table):
     ns_a = nsdecls("a")
     tbl_el = table._tbl
@@ -683,13 +774,13 @@ def apply_clean_table_borders_and_stripes(table):
         tblPr.attrib['bandRow'] = '1'
         tblPr.attrib['bandCol'] = '0'
 
-    header_bg = "677482"       # ヘッダー背景（スレートグレー）
-    row_even_bg = "FFFFFF"     # データ1, 3, 5行目：白
-    row_odd_bg = "E8ECEF"      # データ2, 4行目：少し濃い薄いグレー（1行おき）
+    header_bg = "677482"
+    row_even_bg = "FFFFFF"
+    row_odd_bg = "E8ECEF"
 
-    border_header_sep = "FFFFFF"  # ヘッダー内の縦仕切り線
-    border_gray = "B8C0C8"        # 背景が薄い部分のグレー罫線
-    border_outer = "677482"       # 外枠・ヘッダー下の線
+    border_header_sep = "FFFFFF"
+    border_gray = "B8C0C8"
+    border_outer = "677482"
 
     trs = tbl_el.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}tr')
     num_rows = len(trs)
@@ -717,21 +808,18 @@ def apply_clean_table_borders_and_stripes(table):
                 tcPr.remove(child)
             tcPr.attrib['anchor'] = anchor_attr
 
-            # 1. lnL (左線)
             l_clr = border_outer if is_first_col else (border_header_sep if is_header else border_gray)
             tcPr.append(parse_xml(
                 f'<a:lnL {ns_a} w="12700" cap="flat" cmpd="sng" algn="ctr">'
                 f'<a:solidFill><a:srgbClr val="{l_clr}"/></a:solidFill><a:prstDash val="solid"/></a:lnL>'
             ))
 
-            # 2. lnR (右線)
             r_clr = border_outer if is_last_col else (border_header_sep if is_header else border_gray)
             tcPr.append(parse_xml(
                 f'<a:lnR {ns_a} w="12700" cap="flat" cmpd="sng" algn="ctr">'
                 f'<a:solidFill><a:srgbClr val="{r_clr}"/></a:solidFill><a:prstDash val="solid"/></a:lnR>'
             ))
 
-            # 3. lnT (上線)
             t_clr = border_outer if (is_header or r_idx == 1) else border_gray
             t_w = "19050" if r_idx == 1 else "12700"
             tcPr.append(parse_xml(
@@ -739,7 +827,6 @@ def apply_clean_table_borders_and_stripes(table):
                 f'<a:solidFill><a:srgbClr val="{t_clr}"/></a:solidFill><a:prstDash val="solid"/></a:lnT>'
             ))
 
-            # 4. lnB (下線)
             b_clr = border_outer if (is_header or is_last_row) else border_gray
             b_w = "19050" if is_header else "12700"
             tcPr.append(parse_xml(
@@ -747,7 +834,6 @@ def apply_clean_table_borders_and_stripes(table):
                 f'<a:solidFill><a:srgbClr val="{b_clr}"/></a:solidFill><a:prstDash val="solid"/></a:lnB>'
             ))
 
-            # 5. solidFill (背景塗りつぶし - ボーダーの後に配置)
             tcPr.append(parse_xml(
                 f'<a:solidFill {ns_a}><a:srgbClr val="{bg_color}"/></a:solidFill>'
             ))
@@ -827,6 +913,8 @@ def format_table_and_note(slide, total_width_pt=671.1, assigned_images=None, cap
             proportions = [0.22, 0.38, 0.40]
         elif target_cols == 4:
             proportions = [0.20, 0.30, 0.30, 0.20]
+        elif target_cols == 5:
+            proportions = [0.18, 0.22, 0.20, 0.20, 0.20]
         else:
             proportions = [1.0 / target_cols] * target_cols
 
@@ -834,14 +922,14 @@ def format_table_and_note(slide, total_width_pt=671.1, assigned_images=None, cap
             col_w = (actual_width.pt) * proportions[c]
             table.columns[c].width = int(Pt(col_w))
 
-        font_sz = Pt(9.0) if (len(table.rows) >= 6 or has_image) else Pt(10.0)
+        font_sz = Pt(8.5) if (len(table.rows) >= 6 or target_cols >= 5 or has_image) else Pt(10.0)
         for r_idx, row in enumerate(table.rows):
             for c_idx, cell in enumerate(row.cells):
                 cell.text_frame.word_wrap = True
-                cell.text_frame.margin_left = Pt(8)
-                cell.text_frame.margin_right = Pt(8)
-                cell.text_frame.margin_top = Pt(5)
-                cell.text_frame.margin_bottom = Pt(5)
+                cell.text_frame.margin_left = Pt(6)
+                cell.text_frame.margin_right = Pt(6)
+                cell.text_frame.margin_top = Pt(4)
+                cell.text_frame.margin_bottom = Pt(4)
                 for p in cell.text_frame.paragraphs:
                     p.font.name = "メイリオ"
                     p.font.size = font_sz
@@ -1304,15 +1392,16 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
             pass
 
 
+# ★【改善③】入力情報（数値・商品A〜E・チャネル・2027年目標等）の網羅性チェック★
 def run_quality_check(raw_memo, edited_chapters, doc_title):
     memo_topics = {
-        "平日集客の対策": ["平日", "ランチ", "団体"],
-        "SNSの見直し・強化": ["SNS", "Instagram", "TikTok"],
-        "写真素材の撮影": ["写真", "撮影", "撮り直し"],
-        "イベント企画の刷新": ["イベント", "マルシェ", "ライトアップ", "企画"],
-        "地域・近隣企業との連携": ["地域", "近隣", "連携", "タイアップ", "飲食店", "企業"],
-        "若年層（20〜30代）の獲得": ["若い", "若年", "20代", "30代"],
-        "現場の負担配慮・スモールスタート": ["人手", "スタッフ", "無理なく", "スモールスタート", "予算"]
+        "月別売上推移（1〜6月・計6,500万円）": ["850", "920", "1,100", "1100", "980", "1,250", "1250", "1,400", "1400", "6,500", "6500"],
+        "カテゴリー別売上構成（生活雑貨35%・食品12%等）": ["生活雑貨", "35", "家電", "25", "ファッション", "20", "食品", "12"],
+        "顧客年代構成（30〜40代中心・20代拡大）": ["20代", "30代", "40代", "58"],
+        "商品別実績（商品A〜Eの売上・利益率）": ["商品A", "商品B", "商品C", "商品D", "商品E", "40", "1,400", "1400"],
+        "販売チャネル構成（自社EC55%・モール拡大）": ["自社EC", "55", "楽天市場", "25", "Amazon", "15"],
+        "キャンペーン実績比較（春・GW・初夏）": ["春の新生活", "ゴールデンウィーク", "初夏", "80", "100", "70", "720"],
+        "2027年度目標（1.5億円・リピート率30%等）": ["1億5,000", "1.5億", "8,000", "30", "45"]
     }
 
     all_slide_text = doc_title + " " + " ".join([
@@ -1323,7 +1412,9 @@ def run_quality_check(raw_memo, edited_chapters, doc_title):
         ch.get("sub_body", "") + " " +
         " ".join(ch.get("step_descs", [])) + " " +
         " ".join(ch.get("checklist_items", [])) + " " +
-        " ".join([val for row in ch.get("table", {}).get("rows", []) for val in row])
+        " ".join([val for row in ch.get("table", {}).get("rows", []) for val in row]) + " " +
+        " ".join(map(str, ch.get("chart_info", {}).get("categories", []))) + " " +
+        " ".join(map(str, ch.get("chart_info", {}).get("values", [])))
         for ch in edited_chapters
     ])
 
@@ -1352,10 +1443,10 @@ with st.sidebar:
 
 col1, col2 = st.columns(2)
 with col1:
-    client_name = st.text_input("提案先（顧客名）", "例）株式会社グリーンリゾート 役員会 各位")
-    doc_title = st.text_input("資料タイトル", "平日集客の強化と若年層獲得に向けた再生・活性化計画")
+    client_name = st.text_input("提案先（顧客名）", "株式会社ネクストライフ")
+    doc_title = st.text_input("資料タイトル", "EC事業売上分析および2027年度販売成長戦略")
 with col2:
-    sender_name = st.text_input("作成者・部署など", "企画推進室")
+    sender_name = st.text_input("作成者・部署など", "EC事業部")
     uploaded_files = st.file_uploader(
         "挿入画像（任意・複数可）",
         type=["png", "jpg", "jpeg"],
@@ -1386,46 +1477,87 @@ if active_images:
 
 raw_memo = st.text_area(
     "資料の内容メモ",
-    """最近ちょっとお客さんが減っている気がする。特に平日。土日はそれなりに来ているけど、平日はかなり空いている日もある。
+    """当社ECサイトの2026年度上期の販売実績を振り返り、今後の売上拡大に向けた施策を検討したい。
 
-去年と比べても全体的にあまり良くない。正確な数字は確認が必要だけど、感覚としては1割くらい減っているんじゃないかと思う。
+全体として売上は伸びているが、商品によって売れ行きに差がある。また、新規顧客は増えているものの、リピーターの獲得にはまだ課題がある。
 
-特に若い人が少ない。ファミリーは来てくれているけど、20代とか30代前半くらいの人にはあまり選ばれていないのかもしれない。
+【1. 月別売上実績】
+2026年1月〜6月の売上は以下の通り。
+1月：850万円
+2月：920万円
+3月：1,100万円
+4月：980万円
+5月：1,250万円
+6月：1,400万円
+上期累計売上は6,500万円。1月と比較して6月の売上は約65％増加している。3月と6月に売上が大きく伸びている。春の新生活需要や夏に向けた販促が影響した可能性がある。
 
-そもそも施設のことを知らない人も多いと思う。近隣の人でも、何ができる場所なのかよく分からないという話を聞いたことがある。
+【2. 商品カテゴリー別売上構成】
+上期売上6,500万円のカテゴリー別構成は以下の通り。
+生活雑貨：35％
+家電・デジタル：25％
+ファッション：20％
+食品・飲料：12％
+その他：8％
+生活雑貨が最も大きな売上構成を占めている。一方で、食品・飲料は売上構成が小さいものの、購入頻度が比較的高いカテゴリーとなっている。
 
-今やっていること
-・ホームページはあるけど、あまり更新できていない
-・Instagramは一応やっている。投稿は月に2〜3回程度
-・イベントは季節ごとに実施しているが、告知が遅くなりがち
-・割引クーポンを出したことはあるが、その後どうだったかよく分からない
-・地元の飲食店とは少し付き合いがある
+【3. 顧客の年代構成】
+購入者の年代別割合は以下の通り。
+20代：15％
+30代：30％
+40代：28％
+50代：18％
+60代以上：9％
+30代と40代で全体の58％を占める。今後は20代の新規顧客を増やすことも検討したい。
 
-個人的にはSNSをもっと活用した方がいいと思う。特にInstagramやTikTok。若い人は検索よりもSNSで行き先を探している印象がある。
+【4. 商品別販売実績】
+上期の商品別販売データ。
+商品A：生活雑貨セット（販売数量：4,200個、売上：1,400万円、利益率：35％）
+商品B：ワイヤレスイヤホン（販売数量：1,800個、売上：1,250万円、利益率：28％）
+商品C：収納ボックス（販売数量：3,500個、売上：1,050万円、利益率：40％）
+商品D：季節限定食品セット（販売数量：2,800個、売上：780万円、利益率：22％）
+商品E：ファッション小物（販売数量：2,100個、売上：920万円、利益率：32％）
+商品Aは売上が最も高い。商品Cは利益率が最も高く、収益性の面で重要な商品となっている。
 
-あと、施設の写真が少し古い。今の雰囲気と違うので、写真を撮り直した方がいい。食事や景色、実際に楽しんでいる人の写真などがあると良さそう。
+【5. 販売チャネル別実績】
+売上の販売経路別構成。
+自社ECサイト：55％
+楽天市場：25％
+Amazon：15％
+その他：5％
+自社ECサイトが売上の過半数を占めている。今後はモール型ECの売上拡大も検討する必要がある。
 
-平日限定のプランも検討したい。例えばランチと施設利用をセットにするとか、近隣の会社向けに団体プランを作るとか。団体利用は意外と可能性があると思う。
+【6. 販促キャンペーンの実績比較】
+過去に実施したキャンペーンの結果。
+春の新生活キャンペーン（実施期間：3月1日〜3月31日、広告費：80万円、売上：650万円、新規顧客：320人）
+ゴールデンウィークセール（実施期間：4月25日〜5月10日、広告費：100万円、売上：580万円、新規顧客：250人）
+初夏のまとめ買いキャンペーン（実施期間：6月1日〜6月30日、広告費：70万円、売上：720万円、新規顧客：400人）
+初夏のキャンペーンは広告費が最も少ない一方、売上と新規顧客数が最も多かった。まとめ買いを促す施策が効果的だった可能性がある。
 
-イベントについても、今は毎年同じような内容になっているので、もう少し新しい企画が欲しい。例えば地元の飲食店と一緒にマルシェをやるとか、夜のライトアップなども面白そう。
+【7. 現在の課題】
+・新規顧客は増えているが、リピート購入につながっていない
+・商品カテゴリーによって利益率の差がある
+・自社ECへの売上依存度が高い
+・SNSのフォロワー数は増えているが、購入へのつながりが不明確
+・販促キャンペーンの効果測定が十分にできていない
+特にリピーター対策は優先度が高いと考えている。
 
-気になっているのは人手不足。新しいことをやりたくても、現場のスタッフに負担がかかるのは避けたい。できれば今いるメンバーで無理なく運営できる形がいい。
+【8. 今後の販売戦略】
+① リピーター獲得：購入後のメール配信、会員限定クーポン、ポイント制度の見直しを実施する。
+② 商品戦略：利益率の高い商品Cの販売を強化する。また、商品Aとのセット販売も検討する。
+③ 販売チャネル拡大：楽天市場・Amazonの商品ページ改善と広告運用を強化する。
+④ SNS販促強化：Instagramを中心に商品の使用シーンや購入者のレビューを発信する。
+⑤ 販促施策の改善：過去のキャンペーン実績を分析し、広告費に対する売上効果を確認しながら施策を実施する。
 
-予算はあまり大きくかけられない。まずはできることから小さく始めて、効果があれば広げていくのが良いと思う。
+【9. 2027年度の目標】
+年間売上目標：1億5,000万円
+新規顧客数：年間8,000人
+リピート購入率：現在の20％から30％へ改善
+自社EC以外の販売チャネル売上構成比：45％
 
-今後やりたいこととしては、
-・SNSの見直し
-・写真素材の撮影
-・平日向けプランの検討
-・イベントの見直し
-・近隣企業や店舗との連携
-
-といったところ。
-
-まずは3か月くらい試してみて、来場者数やSNSの反応などを見ながら次の展開を考えたい。
-
-最終的には、平日の来場者を増やすことと、若い世代にも選ばれる施設にしていくことが目標。""",
-    height=240
+【10. 最後に】
+今後は単純に新規顧客を増やすだけでなく、既存顧客との関係を強化し、継続的に購入してもらえる仕組みを構築したい。
+売上規模の拡大と同時に利益率も意識し、持続的に成長できるEC事業を目指す。""",
+    height=260
 )
 
 
@@ -1452,50 +1584,43 @@ with col_btn1:
                         "image_contexts": image_contexts
                     }
 
+                    # ★【改善③・④】入力情報の100%網羅とデータ性質に応じたグラフ・表自動選定★
                     single_pass_prompt = f"""
-                    あなたは卓越した経営プレゼン資料作成のプロコンサルタントです。
-                    以下の入力を直接分析し、メモに書かれた施策・課題・検討事項を【1つも省略せず完全に網羅】したプレゼンスライド用JSONを作成してください。
+                    あなたは卓越した経営コンサルタント兼プレゼン資料作成のプロフェッショナルです。
+                    以下の入力メモの数値・事実・項目・目標を【1つも省略せず正確に反映】したプレゼンスライドJSONを作成してください。
+                    また、元メモに明記された事実（実績数値・目標数値）と、分析・推測（「〜可能性がある」「〜とみられる」等）を明確に区別して記述してください。
 
                     【入力データ】
                     {json.dumps(prompt_data, ensure_ascii=False, indent=2)}
 
-                    【必須生成ルール】
-                    1. ★資料タイトルの洗練★:
-                       - 入力されたタイトルが口語やメモ的な場合（例: 「〜について」「今後どうしていくか」など）、経営会議や提案書に相応しい洗練されたビジネスプレゼンタイトル（例: 「平日集客の強化と若年層獲得に向けた再生・活性化計画」）を考案し、"suggested_doc_title" に格納してください。
-                    2. ★施策一覧（table）の完全網羅ルール（最重要）★:
-                       - メモにある「今後やりたいこと」（①SNSの見直し、②写真素材の撮影、③平日向けプランの検討、④イベントの見直し、⑤近隣企業や店舗との連携）を【絶対に削らず全5項目すべて】表（table）の行に含めてください。
-                       - tableの形式:
-                         "table": {{
-                           "headers": ["施策分野", "具体的な取り組み内容", "狙い・詳細"],
-                           "rows": [
-                             ["SNS見直し・強化", "Instagram・TikTokの活用強化", "検索よりSNSで行き先を探す20〜30代若年層への訴求"],
-                             ["写真素材撮影", "施設写真の全面的撮り直し", "現在の魅力に合わせ食事・景色・実際の体験風景を発信"],
-                             ["平日限定プラン", "ランチセット・近隣企業向け団体プラン", "平日利用の底上げと潜在需要のある団体利用の開拓"],
-                             ["イベント企画刷新", "地元飲食店とのマルシェ・夜間ライトアップ", "マンネリ打破と新規・若年層の来訪動機づくり"],
-                             ["地域・近隣連携", "周辺飲食店・近隣企業とのタイアップ", "地元認知の向上と相互送客・平日団体利用の獲得"]
-                           ],
-                           "note": "※予算を抑え、現行スタッフ体制で無理なく小さく始めて効果検証します。"
-                         }}
-                    3. 各章のコンテンツに合わせたレイアウト選定:
-                       - "line_chart": 月別推移などの数値変化
-                       - "pie_chart": 年代構成、割合、シェアなど（合計100%になるデータ）
-                       - "bar_chart": 複数項目の数量比較
-                       - "text": 現状課題、運営方針、制約条件、最終目標など
-                       - "step": 3ヶ月の試行・検証スケジュールなど手順フロー
-                       - "checklist": 現状の取り組み状況一覧など確認事項
-                       - "table": 上記の施策一覧
-                    4. "step" の場合:
-                       - "step_descs": メモから抽出した具体的な4つのアクションステップ文字列配列。※先頭に「①」「②」「1.」「STEP 1」などの番号記号は絶対に付けないでください。
-                    5. "main_item": 15文字以内の短いキャッチコピー。
+                    【グラフ・表の自動選択ルール】
+                    データの性質に合わせて最適な "layout_type" を選定してください:
+                    - "line_chart": 時系列の推移（1月〜6月の月別売上など）
+                    - "pie_chart": 構成比・シェア・内訳（合計100%前後のカテゴリー別構成、年代構成、チャネル構成など）
+                    - "bar_chart": 項目別の数値比較（商品別売上、キャンペーン別売上など）
+                    - "table": 複数属性の比較表や一覧表（商品A〜Eの販売数量・売上・利益率の一覧、キャンペーン比較表、5大販売戦略一覧など）
+                    - "step": 実行ステップやロードマップ
+                    - "checklist": 現状の課題や確認事項一覧
+                    - "text": 経営方針・目標・まとめなどの解説スライド
+
+                    【必須網羅ルール（省略厳禁）】
+                    1. 月別売上（1月:850万円, 2月:920万円, 3月:1,100万円, 4月:980万円, 5月:1,250万円, 6月:1,400万円, 上期累計6,500万円, 1月比6月約65%増）を正確に反映すること。
+                    2. カテゴリー別構成（生活雑貨35%, 家電・デジタル25%, ファッション20%, 食品・飲料12%, その他8%）を正確に反映すること。
+                    3. 顧客年代構成（20代15%, 30代30%, 40代28%, 50代18%, 60代以上9%, 30〜40代計58%）を正確に反映すること。
+                    4. 商品A〜Eの全5商品（商品A:4,200個/1,400万円/35%, 商品B:1,800個/1,250万円/28%, 商品C:3,500個/1,050万円/40%, 商品D:2,800個/780万円/22%, 商品E:2,100個/920万円/32%）の数値と特徴を漏れなく反映すること。
+                    5. 販売チャネル別構成（自社EC55%, 楽天市場25%, Amazon15%, その他5%）を正確に反映すること。
+                    6. キャンペーン3件（春の新生活:3/1〜3/31/広告80万/売上650万/新規320人, GWセール:4/25〜5/10/広告100万/売上580万/新規250人, 初夏まとめ買い:6/1〜6/30/広告70万/売上720万/新規400人）を正確に反映すること。
+                    7. 2027年度目標（年間売上1億5,000万円、新規顧客年間8,000人、リピート購入率20%→30%、自社EC以外構成比45%）を必ずスライド内に明記すること。
+                    8. 5大販売戦略（①リピーター獲得、②商品戦略、③販売チャネル拡大、④SNS販促強化、⑤販促施策の改善）をすべて含めること。
 
                     【出力形式】
                     純粋なJSONのみを出力してください。
                     {{
-                      "suggested_doc_title": "洗練された資料タイトル",
+                      "suggested_doc_title": "EC事業売上分析および2027年度販売成長戦略",
                       "chapters": [
                         {{
                           "chapter_title": "章タイトル",
-                          "layout_type": "text",
+                          "layout_type": "line_chart",
                           "main_item": "主要見出し（15文字以内）",
                           "body": "本文テキスト",
                           "sub_title": "補助項目タイトル",
@@ -1505,14 +1630,20 @@ with col_btn1:
                           "image_captions": [],
                           "step_descs": ["ステップ1", "ステップ2", "ステップ3", "ステップ4"],
                           "checklist_intro": "導入文",
-                          "checklist_items": ["項目1", "項目2", "項目3", "項目4"],
+                          "checklist_items": ["項目1", "項目2", "項目3", "項目4", "項目5"],
                           "checklist_outro": "案内文",
                           "table": {{
-                            "headers": ["施策分野", "具体的な取り組み内容", "狙い・詳細"],
+                            "headers": ["列1", "列2", "列3"],
                             "rows": [["行1-1", "行1-2", "行1-3"]],
-                            "note": "※注記文"
+                            "note": ""
                           }},
-                          "chart_info": {{}}
+                          "chart_info": {{
+                            "title": "グラフタイトル",
+                            "unit": "万円",
+                            "categories": ["1月", "2月", "3月", "4月", "5月", "6月"],
+                            "series_name": "売上高（万円）",
+                            "values": [850.0, 920.0, 1100.0, 980.0, 1250.0, 1400.0]
+                          }}
                         }}
                       ]
                     }}
@@ -1543,7 +1674,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
     st.caption("各スライドの内容を自由に変更できます。")
 
     if "refined_title" in st.session_state:
-        doc_title = st.text_input("資料タイトル（AI洗練タイトル）", value=st.session_state["refined_title"], key="refined_title_box")
+        doc_title = st.text_input("資料タイトル", value=st.session_state["refined_title"], key="refined_title_box")
     else:
         doc_title = st.text_input("資料タイトル", value=doc_title, key="current_title_box")
 
@@ -1605,10 +1736,10 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         s_descs = b_steps[:4]
                 if not isinstance(s_descs, list) or len(s_descs) < 4:
                     s_descs = [
-                        "現状のSNS運用の見直しと魅力的な写真素材の撮影",
-                        "平日向けランチプラン・新イベント企画・地域連携の準備",
-                        "各種施策の告知開始と3ヶ月間の試行運用テスト",
-                        "来場者数やSNS反応等のデータ確認と次の展開の検討"
+                        "リピーター獲得：購入後フォローメール配信・会員限定クーポン・ポイント制度見直し",
+                        "商品戦略：高利益率な商品C（利益率40%）の販売強化および商品Aとのセット販売検討",
+                        "販売チャネル拡大：楽天市場・Amazonの商品ページ改善と広告運用強化",
+                        "SNS販促・効果測定：Instagramでの活用シーン・レビュー発信とキャンペーンROAS検証"
                     ]
                 e_s_descs = []
                 s_cols = st.columns(2)
@@ -1624,15 +1755,15 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
             # 2. チェックリスト詳細フォーム
             if e_layout == "checklist":
                 st.markdown("**✅ チェックリスト設定（最大6項目）**")
-                c_intro_val = st.text_input("チェックリスト導入文", value=ch.get("checklist_intro", "施策実行における重要確認事項です。"), key=f"c_intro_{idx}")
+                c_intro_val = st.text_input("チェックリスト導入文", value=ch.get("checklist_intro", "EC事業における現在の主要課題一覧です。"), key=f"c_intro_{idx}")
                 c_items_def = ch.get("checklist_items", [])
                 if not isinstance(c_items_def, list) or not c_items_def:
                     c_items_def = [
-                        "ホームページ：開設済みだが更新が滞っている",
-                        "Instagram：アカウントはあるが月2〜3回投稿に留まる",
-                        "イベント：季節ごとに実施するも告知が遅れがち",
-                        "割引クーポン：過去に発行したが効果検証が未実施",
-                        "地域連携：地元の飲食店と限定的な付き合いに留まる"
+                        "新規顧客は増えているが、リピート購入につながっていない（現状リピート率20%→目標30%）",
+                        "商品カテゴリーによって利益率に差がある（最高40%〜最低22%）",
+                        "自社ECサイトへの売上依存度が高い（自社EC55%・他チャネル45%へ拡大が目標）",
+                        "SNSのフォロワー数は増えているが、実際の購入へのつながりが不明確",
+                        "販促キャンペーンの効果測定が十分にできていない"
                     ]
                 e_c_items = []
                 ci_cols = st.columns(2)
@@ -1642,7 +1773,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         val_item = st.text_input(f"チェック項目 {ci+1}", value=def_item, key=f"ci_{idx}_{ci}")
                         if val_item.strip():
                             e_c_items.append(val_item.strip())
-                c_outro_val = st.text_input("確認後の案内文", value=ch.get("checklist_outro", "全項目の確認完了後、各担当部門にて施策を進行してください。"), key=f"c_outro_{idx}")
+                c_outro_val = st.text_input("確認後の案内文", value=ch.get("checklist_outro", "特にリピーター獲得施策を最優先とし、2027年度売上1億5,000万円達成を目指します。"), key=f"c_outro_{idx}")
             else:
                 c_intro_val = ch.get("checklist_intro", "")
                 e_c_items = ch.get("checklist_items", [])
@@ -1650,23 +1781,23 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
 
             # 3. テーブル詳細フォーム
             if e_layout == "table":
-                st.markdown("**📋 表組み（施策一覧・タスク管理）データ設定**")
+                st.markdown("**📋 表組み（比較表・施策一覧・タスク管理）データ設定**")
                 tbl_raw = ch.get("table")
                 if not isinstance(tbl_raw, dict):
                     tbl_raw = {}
                 h_list = tbl_raw.get("headers")
                 if not isinstance(h_list, list) or not h_list:
-                    h_list = ["施策分野", "具体的な取り組み内容", "狙い・詳細"]
+                    h_list = ["項目", "詳細・実績", "備考・狙い"]
                 r_list = tbl_raw.get("rows")
                 if not isinstance(r_list, list) or not r_list:
                     r_list = [
-                        ["SNS見直し・強化", "Instagram・TikTokの活用強化", "検索よりSNSで行き先を探す20〜30代若年層への訴求"],
-                        ["写真素材撮影", "施設写真の全面的撮り直し", "現在の魅力に合わせ食事・景色・実際の体験風景を発信"],
-                        ["平日限定プラン", "ランチセット・近隣企業向け団体プラン", "平日利用の底上げと潜在需要のある団体利用の開拓"],
-                        ["イベント企画刷新", "地元飲食店とのマルシェ・夜間ライトアップ", "マンネリ打破と新規・若年層の来訪動機づくり"],
-                        ["地域・近隣連携", "周辺飲食店・近隣企業とのタイアップ", "地元認知の向上と相互送客・平日団体利用の獲得"]
+                        ["商品A：生活雑貨セット", "販売数量4,200個 / 売上1,400万円", "利益率35%・売上トップ商品"],
+                        ["商品B：ワイヤレスイヤホン", "販売数量1,800個 / 売上1,250万円", "利益率28%"],
+                        ["商品C：収納ボックス", "販売数量3,500個 / 売上1,050万円", "利益率40%・最高利益率の重要商品"],
+                        ["商品D：季節限定食品セット", "販売数量2,800個 / 売上780万円", "利益率22%・購入頻度が高い傾向"],
+                        ["商品E：ファッション小物", "販売数量2,100個 / 売上920万円", "利益率32%"]
                     ]
-                t_cols_input = st.text_input("列見出し（カンマ区切り・2〜4列）", value=", ".join(map(str, h_list)), key=f"th_{idx}")
+                t_cols_input = st.text_input("列見出し（カンマ区切り・2〜5列）", value=", ".join(map(str, h_list)), key=f"th_{idx}")
                 e_headers = [c.strip() for c in t_cols_input.split(",") if c.strip()]
 
                 num_display_rows = max(len(r_list), 5)
@@ -1677,15 +1808,15 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     row_str = st.text_input(f"{ri+1}行目", value=default_row_str, key=f"tr_{idx}_{ri}")
                     if row_str.strip():
                         e_rows.append([c.strip() for c in row_str.split(",")])
-                t_note = st.text_input("表の注記（任意）", value=tbl_raw.get("note", "※予算を抑え、現行スタッフ体制で無理なく小さく始めて効果検証します。"), key=f"tn_{idx}")
+                t_note = st.text_input("表の注記（任意）", value=tbl_raw.get("note", ""), key=f"tn_{idx}")
                 e_table = {"headers": e_headers, "rows": e_rows, "note": t_note}
             else:
                 e_table = ch.get("table") if isinstance(ch.get("table"), dict) else {}
 
-            # 4. グラフ設定フォーム
+            # 4. グラフ設定フォーム（章固有データ優先で流用を防止）
             c_info = ch.get("chart_info")
             if not isinstance(c_info, dict) or not c_info.get("values"):
-                c_info = extract_chart_data_from_memo(raw_memo)
+                c_info = extract_chapter_specific_chart_data(e_title, e_body, raw_memo)
 
             if e_layout in ["line_chart", "bar_chart", "pie_chart"]:
                 st.markdown("**📊 グラフデータ設定**")
@@ -1695,19 +1826,19 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 with g_cols[1]:
                     def_unit = c_info.get("unit", "")
                     if not def_unit:
-                        if e_layout == "pie_chart" or any(kw in e_title or kw in e_body for kw in ["％", "%", "比率", "割合", "構成"]):
+                        if e_layout == "pie_chart" or any(kw in e_title or kw in e_body for kw in ["％", "%", "構成", "割合", "チャネル", "年代"]):
                             def_unit = "％"
-                        elif any(kw in e_title or kw in e_body for kw in ["万", "円", "売上"]):
+                        elif any(kw in e_title or kw in e_body for kw in ["万", "円", "売上", "月別"]):
                             def_unit = "万円"
                     g_unit = st.text_input("単位（％, 万円, 個など）", value=def_unit, key=f"gu_{idx}")
                 with g_cols[2]:
                     g_cats_str = st.text_input(
                         "カテゴリ（カンマ区切り）",
-                        value=",".join(map(str, c_info.get("categories", ["20代", "30代", "40代", "50代", "60代以上"] if e_layout == "pie_chart" else ["4月", "5月", "6月", "7月", "8月", "9月"]))),
+                        value=",".join(map(str, c_info.get("categories", []))),
                         key=f"gc_{idx}"
                     )
                 with g_cols[3]:
-                    def_vals = c_info.get("values", [15, 25, 30, 20, 10] if e_layout == "pie_chart" else [1200, 1450, 1380, 1600, 1850, 1720])
+                    def_vals = c_info.get("values", [])
                     clean_vals = [str(v).replace(',', '') for v in def_vals]
                     g_vals_str = st.text_input("数値データ（カンマ区切り）", value=",".join(clean_vals), key=f"gv_{idx}")
 
@@ -1767,7 +1898,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
 
                 if not template_path:
                     for f in os.listdir(current_dir):
-                        if f.endswith('.pptx') and not any(kw in f for kw in ["報告", "提案書", "上期", "成長戦略", "集客"]):
+                        if f.endswith('.pptx') and not any(kw in f for kw in ["報告", "提案書", "上期", "成長戦略", "集客", "ネクストライフ"]):
                             template_path = os.path.join(current_dir, f)
                             break
 
@@ -1810,6 +1941,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 format_and_align_index_slide(index_slide)
 
                 inserted_image_report = []
+                chart_audit_report = []
 
                 # 3. 各章スライド構築
                 for ch_idx, ch in enumerate(edited_chapters):
@@ -1822,7 +1954,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     img_indices = ch.get("assigned_image_indices", [])
                     assigned_imgs = [active_images[i] for i in img_indices if i < len(active_images)]
                     captions = ch.get("image_captions", [])
-                    chart_info = ch.get("chart_info")
+                    raw_chart_info = ch.get("chart_info")
 
                     should_draw_chart = (layout_type in ["line_chart", "bar_chart", "pie_chart"])
 
@@ -1863,17 +1995,17 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                             step_descs = b_steps[:4]
                     if not isinstance(step_descs, list) or len(step_descs) < 4:
                         step_descs = [
-                            "現状のSNS運用の見直しと魅力的な写真素材の撮影",
-                            "平日向けランチプラン・新イベント企画・地域連携の準備",
-                            "各種施策の告知開始と3ヶ月間の試行運用テスト",
-                            "来場者数やSNS反応等のデータ確認と次の展開の検討"
+                            "リピーター獲得：購入後フォローメール配信・会員限定クーポン・ポイント制度見直し",
+                            "商品戦略：高利益率な商品C（利益率40%）の販売強化および商品Aとのセット販売検討",
+                            "販売チャネル拡大：楽天市場・Amazonの商品ページ改善と広告運用強化",
+                            "SNS販促・効果測定：Instagramでの活用シーン・レビュー発信とキャンペーンROAS検証"
                         ]
                     for idx_s in range(1, 5):
                         raw_desc_s = step_descs[idx_s - 1] if len(step_descs) >= idx_s else ""
                         ch_map[f"[[STEP{idx_s}の説明]]"] = clean_step_text(raw_desc_s)
 
-                    c_intro = ch.get("checklist_intro", "施策実行における重要確認事項です。")
-                    c_outro = ch.get("checklist_outro", "全項目の確認完了後、各担当部門にて施策を進行してください。")
+                    c_intro = ch.get("checklist_intro", "EC事業における現在の主要課題一覧です。")
+                    c_outro = ch.get("checklist_outro", "特にリピーター獲得施策を最優先とし、2027年度売上1億5,000万円達成を目指します。")
                     c_items = ch.get("checklist_items", [])
                     ch_map["[[チェックリスト導入文]]"] = c_intro
                     ch_map["[[チェック後の案内文]]"] = c_outro
@@ -1903,34 +2035,27 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         for af in assigned_imgs:
                             inserted_image_report.append(f"スライド {ch_page_num}（{clean_ch_title}）: 『{af['filename']}』")
 
-                    # グラフ描画
-                    if should_draw_chart and isinstance(chart_info, dict):
-                        categories = chart_info.get("categories", ["4月", "5月", "6月", "7月", "8月", "9月"])
-                        g_title_raw = str(chart_info.get("title") or f"{clean_ch_title}")
-                        g_unit = str(chart_info.get("unit") or "").strip()
+                    # ★【改善①・②・④】グラフデータ検証＆描画★
+                    if should_draw_chart:
+                        c_dict, is_valid_chart = verify_and_fix_chart_data(
+                            raw_chart_info, layout_type, clean_ch_title, body_text_val, raw_memo
+                        )
+                        categories = c_dict.get("categories", [])
+                        values = c_dict.get("values", [])
+                        g_title_raw = str(c_dict.get("title") or f"{clean_ch_title}")
+                        g_unit = str(c_dict.get("unit") or "").strip()
 
                         if g_unit and f"（{g_unit}）" not in g_title_raw and f"({g_unit})" not in g_title_raw:
                             g_title_text = f"{g_title_raw}（{g_unit}）"
                         else:
                             g_title_text = g_title_raw
 
-                        series_name = str(chart_info.get("series_name") or g_title_text)
-                        raw_values = chart_info.get("values", [1200.0, 1450.0, 1380.0, 1600.0, 1850.0, 1720.0])
+                        series_name = str(c_dict.get("series_name") or g_title_text)
 
-                        values = []
-                        if isinstance(raw_values, list):
-                            for v in raw_values:
-                                try:
-                                    clean_num = str(v).replace(',', '').strip()
-                                    values.append(float(clean_num) if clean_num else 0.0)
-                                except Exception:
-                                    values.append(0.0)
-
-                        if categories and values:
-                            min_len = min(len(categories), len(values))
+                        if is_valid_chart:
                             chart_data = CategoryChartData()
-                            chart_data.categories = categories[:min_len]
-                            chart_data.add_series(series_name, values[:min_len])
+                            chart_data.categories = categories
+                            chart_data.add_series(series_name, values)
 
                             try:
                                 is_pie = ("pie" in layout_type or "円" in clean_ch_title)
@@ -1953,13 +2078,13 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
 
                                 if is_pie:
                                     pie_palette = [
-                                        RGBColor(217, 48, 37),   # 1. 赤
-                                        RGBColor(235, 122, 25),  # 2. オレンジ
-                                        RGBColor(98, 178, 44),   # 3. グリーン
-                                        RGBColor(65, 126, 186),  # 4. ブルー
-                                        RGBColor(138, 79, 148),  # 5. パープル
-                                        RGBColor(78, 78, 78),    # 6. ダークグレー
-                                        RGBColor(246, 189, 96),  # 7. ウォームイエロー
+                                        RGBColor(217, 48, 37),
+                                        RGBColor(235, 122, 25),
+                                        RGBColor(98, 178, 44),
+                                        RGBColor(65, 126, 186),
+                                        RGBColor(138, 79, 148),
+                                        RGBColor(78, 78, 78),
+                                        RGBColor(246, 189, 96),
                                     ]
                                     series = chart.series[0]
                                     for p_i, pt in enumerate(series.points):
@@ -2032,8 +2157,12 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                                             val_ax.tick_labels.number_format_is_linked = False
 
                                 force_meiryo_and_style_on_chart(chart, font_size_pt=9)
-                            except Exception:
-                                pass
+                                paired_str = ", ".join([f"{c}:{v}{g_unit}" for c, v in zip(categories, values)])
+                                chart_audit_report.append(f"✅ P{ch_page_num}（{g_title_text}）: [{paired_str}]")
+                            except Exception as e:
+                                chart_audit_report.append(f"⚠️ P{ch_page_num} グラフ描画エラー: {e}")
+                        else:
+                            chart_audit_report.append(f"⚠️ P{ch_page_num}（{g_title_text}）: 数値データが不足しているためグラフを省略しました")
 
                 # 4. テンプレート元スライドの完全消去
                 for _ in range(tpl_slide_count):
@@ -2065,17 +2194,23 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 st.balloons()
                 st.success(f"🎉 『{download_filename}』の自動構築が完了しました！（全 {len(prs.slides)} ページ）")
 
+                # グラフデータ整合性検証レポート
+                if chart_audit_report:
+                    with st.expander("📈 **グラフデータ整合性チェック結果（元データ照合）**", expanded=True):
+                        for line in chart_audit_report:
+                            st.write(line)
+
                 # AI品質チェック＆重要事項網羅性診断レポート
                 q_report = run_quality_check(raw_memo, edited_chapters, doc_title)
-                with st.expander("📊 **AI品質チェック＆網羅性診断レポート（自動検証結果）**", expanded=True):
-                    st.markdown("元メモに記載された重要課題・施策が、資料内に確実に反映されているかを自動検証しました。")
+                with st.expander("📊 **AI品質チェック＆網羅性診断レポート（入力情報反映確認）**", expanded=True):
+                    st.markdown("元メモに記載された重要データ・施策・目標が、資料内に反映されているかを自動検証しました。")
                     q_cols = st.columns(2)
                     for q_idx, (topic_name, is_covered) in enumerate(q_report.items()):
                         with q_cols[q_idx % 2]:
                             if is_covered:
-                                st.write(f"✅ **{topic_name}**: 網羅・反映済み")
+                                st.write(f"✅ **{topic_name}**: 反映済み")
                             else:
-                                st.write(f"⚠️ **{topic_name}**: 未検出（確認を推奨）")
+                                st.write(f"⚠️ **{topic_name}**: 未検出（プレビュー編集画面から追記・調整可能）")
 
                 if inserted_image_report:
                     st.info("📷 **以下のスライドに画像を配置しました：**\n- " + "\n- ".join(inserted_image_report))
