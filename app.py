@@ -152,6 +152,18 @@ def clean_step_text(text):
     return cleaned.strip()
 
 
+# 5件以上のステップ項目がある場合に、4枠に収めつつ5件目以降を省略せず統合するヘルパー
+def normalize_step_descs_to_4(step_descs):
+    cleaned_list = [clean_step_text(x) for x in (step_descs or []) if clean_step_text(x)]
+    if len(cleaned_list) <= 4:
+        while len(cleaned_list) < 4:
+            cleaned_list.append(f"アクション {len(cleaned_list) + 1}")
+        return cleaned_list[:4]
+    first_three = cleaned_list[:3]
+    merged_fourth = " / ".join(cleaned_list[3:])
+    return first_three + [merged_fourth]
+
+
 def sanitize_main_item(main_item, clean_ch_title):
     main_item = str(main_item).strip() if main_item else ""
     if not main_item or len(main_item) > 18 or "。" in main_item or "、" in main_item:
@@ -572,7 +584,7 @@ def build_perfect_steps(slide, step_descs, body_text="", assigned_images=None, c
 
     body_width = Pt(280.0) if has_image else Pt(660.0)
     step_text_width = Pt(220.0) if has_image else Pt(580.0)
-    font_size_step = Pt(11.0) if has_image else Pt(13.0)
+    font_size_step = Pt(11.0) if has_image else Pt(12.5)
 
     if main_body_shp and main_body_shp.has_text_frame:
         main_body_shp.left = Pt(113.7)
@@ -633,8 +645,11 @@ def build_perfect_steps(slide, step_descs, body_text="", assigned_images=None, c
                 new_t.name = f"STEP_{k}_TEXT"
                 step_texts[k] = new_t
 
+    # 5件以上の項目があっても省略せずSTEP 4に集約して全項目を保持
+    normalized_4 = normalize_step_descs_to_4(step_descs)
+
     start_top = Pt(200.0)
-    step_gap = Pt(45.0)
+    step_gap = Pt(46.0)
 
     for k in range(1, 5):
         if k in step_texts:
@@ -642,12 +657,11 @@ def build_perfect_steps(slide, step_descs, body_text="", assigned_images=None, c
             t_shp.left = Pt(180.0) if has_image else Pt(190.0)
             t_shp.top = int(start_top + (k - 1) * step_gap)
             t_shp.width = step_text_width
-            t_shp.height = Pt(32.0)
+            t_shp.height = Pt(36.0)
             if t_shp.has_text_frame:
                 tf = t_shp.text_frame
                 tf.word_wrap = True
-                raw_desc = step_descs[k - 1] if len(step_descs) >= k else f"アクション {k}"
-                tf.text = clean_step_text(raw_desc)
+                tf.text = normalized_4[k - 1]
                 tf.vertical_anchor = MSO_ANCHOR.MIDDLE
                 for p in tf.paragraphs:
                     p.font.size = font_size_step
@@ -889,8 +903,6 @@ def format_table_and_note(slide, total_width_pt=671.1, assigned_images=None, cap
 
         target_rows = max(1, len(rows)) + 1
 
-        # 既存の表要素を一旦削除し、正確な列数・行数で新規生成することで青色残骸やはみ出しを完全防止
-        spTree = slide.shapes._spTree
         old_tbl_el = tbl_shape._element
         old_tbl_el.getparent().remove(old_tbl_el)
 
@@ -1210,7 +1222,6 @@ def format_text_or_image_slide_layout(slide, assigned_images, captions=None):
         insert_slide_picture_safe(slide, assigned_images, captions, max_w_pt=360, max_h_pt=300, left_pt=390, top_pt=130)
 
 
-# ★目次スライド：全項目（01〜）を同一フォント・同一行間・同一位置で整列★
 def build_clean_index_slide(slide, edited_chapters):
     shapes_to_remove = []
     for shp in slide.shapes:
@@ -1232,7 +1243,6 @@ def build_clean_index_slide(slide, edited_chapters):
             pass
 
     num_items = len(edited_chapters)
-    # 項目数に応じて開始Y座標と行間隔を自動調整し、画面内に美しく収める
     if num_items <= 6:
         start_y_pt = 220.0
         step_y_pt = 38.5
@@ -1417,6 +1427,7 @@ def run_quality_check(raw_memo, edited_chapters, doc_title):
         "商品別実績（商品A〜Eの売上・利益率・数量）": ["商品A", "商品B", "商品C", "商品D", "商品E", "40", "4,200", "4200", "1,400", "1400"],
         "販売チャネル構成（自社EC55%・モール拡大）": ["自社EC", "55", "楽天市場", "25", "Amazon", "15"],
         "キャンペーン実績比較（春・GW・初夏）": ["春の新生活", "ゴールデンウィーク", "初夏", "80", "100", "70", "720"],
+        "5大販売戦略（①〜⑤全5項目）": ["リピーター", "商品C", "楽天市場", "Instagram", "キャンペーン実績"],
         "2027年度目標（1.5億円・リピート率30%等）": ["1億5,000", "1.5億", "8,000", "30", "45"]
     }
 
@@ -1603,22 +1614,13 @@ with col_btn1:
                     【入力データ】
                     {json.dumps(prompt_data, ensure_ascii=False, indent=2)}
 
-                    【グラフ・表の自動選択ルール】
-                    - "line_chart": 月別売上推移（1月〜6月）など時系列推移
-                    - "pie_chart": カテゴリー別売上構成（生活雑貨35%等）、顧客年代構成、販売チャネル別構成比（自社EC55%・楽天市場25%・Amazon15%・その他5%）など、割合・内訳を示すスライドは必ず "pie_chart" を選定してください。
-                    - "bar_chart": 項目別の数値比較
-                    - "table": 商品別販売実績（商品A〜E）、キャンペーン実績比較、5大販売戦略などの比較表・一覧表
-                    - "step": 実行ステップやロードマップ
-                    - "checklist": 現状の課題や確認事項一覧
-                    - "text": 経営方針・2027年度目標・まとめなどの解説スライド
-
                     【必須ルール】
                     1. 販売チャネル別構成比（自社EC55%、楽天市場25%、Amazon15%、その他5%）は独立したスライド（"pie_chart"）として必ず作成し、課題スライドと混同しないでください。
-                    2. カテゴリー別売上構成のスライドも "pie_chart" を選定してください。
+                    2. カテゴリー別売上構成・顧客年代構成のスライドは "pie_chart" を選定してください。
                     3. 商品別販売実績の表（table）では、列見出しに ["商品名", "商品詳細", "販売数量", "売上高", "利益率"] を含め、商品A〜Eの5行すべてを省略せず出力してください。カンマ区切り数値（4,200、1,400万円など）はそのまま保持してください。
                     4. キャンペーン実績比較の表（table）では、列見出しに ["キャンペーン名", "実施期間", "広告費", "売上高", "新規顧客"] を含め、3キャンペーンすべてを出力してください。
-                    5. 2027年度目標（年間売上目標1億5,000万円、新規顧客数年間8,000人、リピート購入率20%→30%、自社EC以外構成比45%）を必ずスライドに含めてください。
-                    6. "step" の "step_descs" には先頭に「①」「1.」「STEP 1」などの番号記号を付けないでください。
+                    5. 5大販売戦略（①リピーター獲得、②商品戦略、③販売チャネル拡大、④SNS販促強化、⑤販促施策の改善）の5つすべてを必ず "step_descs" 配列に含めてください。先頭に「①」「1.」「STEP 1」などの番号記号は付けないでください。
+                    6. 2027年度目標（年間売上目標1億5,000万円、新規顧客数年間8,000人、リピート購入率20%→30%、自社EC以外構成比45%）を必ずスライドに含めてください。
                     7. "main_item" は15文字以内の短いキャッチコピーにしてください。
 
                     【出力形式】
@@ -1636,7 +1638,7 @@ with col_btn1:
                           "notice": "",
                           "assigned_image_indices": [],
                           "image_captions": [],
-                          "step_descs": ["ステップ1", "ステップ2", "ステップ3", "ステップ4"],
+                          "step_descs": ["施策1", "施策2", "施策3", "施策4", "施策5"],
                           "checklist_intro": "導入文",
                           "checklist_items": ["項目1", "項目2", "項目3", "項目4", "項目5"],
                           "checklist_outro": "案内文",
@@ -1735,29 +1737,28 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 e_captions = []
 
             if e_layout == "step":
-                st.markdown("**ステップ詳細（最大4ステップ）**")
+                st.markdown("**ステップ・施策詳細（全項目を漏れなく反映）**")
                 s_descs = ch.get("step_descs", [])
-                if (not isinstance(s_descs, list) or len(s_descs) < 4) and e_body:
-                    b_steps = re.findall(r'(?:\d+[\.\s、]|\・|\-)\s*([^\n]+)', e_body)
-                    if len(b_steps) >= 3:
-                        s_descs = b_steps[:4]
-                if not isinstance(s_descs, list) or len(s_descs) < 4:
+                if not isinstance(s_descs, list) or len(s_descs) < 5:
                     s_descs = [
-                        "リピーター獲得：購入後フォローメール配信・会員限定クーポン・ポイント制度見直し",
-                        "商品戦略：高利益率な商品C（利益率40%）の販売強化と商品Aとのセット販売検討",
-                        "販売チャネル拡大：楽天市場・Amazonの商品ページ改善と広告運用強化",
-                        "SNS販促・効果測定：Instagramでの活用シーン・レビュー発信とキャンペーンROAS検証"
+                        "リピーター獲得：購入後のメール配信、会員限定クーポン、ポイント制度の見直しを実施",
+                        "商品戦略：利益率の高い商品C（40%）の販売強化および商品Aとのセット販売検討",
+                        "販売チャネル拡大：楽天市場・Amazonの商品ページ改善と広告運用を強化",
+                        "SNS販促強化：Instagramを中心に商品の使用シーンや購入者のレビューを発信",
+                        "販促施策の改善：過去のキャンペーン実績を分析し、広告費に対する売上効果を確認しながら施策を実施"
                     ]
+                num_step_inputs = max(len(s_descs), 5)
                 e_s_descs = []
                 s_cols = st.columns(2)
-                for s_i in range(4):
-                    default_s = s_descs[s_i] if len(s_descs) > s_i else f"アクション {s_i+1}"
+                for s_i in range(num_step_inputs):
+                    default_s = s_descs[s_i] if len(s_descs) > s_i else ""
                     clean_default = clean_step_text(default_s)
                     with s_cols[s_i % 2]:
-                        val_s = st.text_input(f"STEP {s_i+1}", value=clean_default, key=f"step_{idx}_{s_i}")
-                        e_s_descs.append(clean_step_text(val_s) if val_s else f"ステップ {s_i+1}")
+                        val_s = st.text_input(f"項目 {s_i+1}", value=clean_default, key=f"step_{idx}_{s_i}")
+                        if val_s.strip():
+                            e_s_descs.append(clean_step_text(val_s))
             else:
-                e_s_descs = [clean_step_text(t) for t in ch.get("step_descs", [])]
+                e_s_descs = [clean_step_text(t) for t in ch.get("step_descs", []) if clean_step_text(t)]
 
             if e_layout == "checklist":
                 st.markdown("**✅ チェックリスト設定（最大6項目）**")
@@ -1915,7 +1916,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 }
                 process_slide_shapes(cover_slide, cover_map, is_cover=True)
 
-                # 2. 目次スライド（全章を統一スタイル・整列で描画）
+                # 2. 目次スライド
                 index_slide = duplicate_slide_safe(prs, 1)
                 build_clean_index_slide(index_slide, edited_chapters)
 
@@ -1935,7 +1936,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     captions = ch.get("image_captions", [])
                     raw_chart_info = ch.get("chart_info")
 
-                    # 構成比・チャネル系は円グラフを優先適用
                     if layout_type not in ["line_chart", "bar_chart", "pie_chart", "step", "checklist", "table"]:
                         if any(kw in clean_ch_title for kw in ["カテゴリー", "カテゴリ", "年代", "チャネル", "販売経路"]):
                             layout_type = "pie_chart"
@@ -1973,20 +1973,18 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     ch_map["[[注意文]]"] = notice_val
 
                     step_descs = ch.get("step_descs", [])
-                    if (not isinstance(step_descs, list) or len(step_descs) < 4) and body_text_val:
-                        b_steps = re.findall(r'(?:\d+[\.\s、]|\・|\-)\s*([^\n]+)', body_text_val)
-                        if len(b_steps) >= 3:
-                            step_descs = b_steps[:4]
                     if not isinstance(step_descs, list) or len(step_descs) < 4:
                         step_descs = [
-                            "リピーター獲得：購入後フォローメール配信・会員限定クーポン・ポイント制度見直し",
-                            "商品戦略：高利益率な商品C（利益率40%）の販売強化と商品Aとのセット販売検討",
-                            "販売チャネル拡大：楽天市場・Amazonの商品ページ改善と広告運用強化",
-                            "SNS販促・効果測定：Instagramでの活用シーン・レビュー発信とキャンペーンROAS検証"
+                            "リピーター獲得：購入後のメール配信、会員限定クーポン、ポイント制度の見直しを実施",
+                            "商品戦略：利益率の高い商品C（40%）の販売強化および商品Aとのセット販売検討",
+                            "販売チャネル拡大：楽天市場・Amazonの商品ページ改善と広告運用を強化",
+                            "SNS販促強化：Instagramを中心に商品の使用シーンや購入者のレビューを発信",
+                            "販促施策の改善：過去のキャンペーン実績を分析し、広告費に対する売上効果を確認しながら施策を実施"
                         ]
+
+                    normalized_4 = normalize_step_descs_to_4(step_descs)
                     for idx_s in range(1, 5):
-                        raw_desc_s = step_descs[idx_s - 1] if len(step_descs) >= idx_s else ""
-                        ch_map[f"[[STEP{idx_s}の説明]]"] = clean_step_text(raw_desc_s)
+                        ch_map[f"[[STEP{idx_s}の説明]]"] = normalized_4[idx_s - 1]
 
                     c_intro = ch.get("checklist_intro", "EC事業における現在の主要課題一覧です。")
                     c_outro = ch.get("checklist_outro", "リピーター獲得を最優先とし、2027年度売上1億5,000万円達成を目指します。")
