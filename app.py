@@ -10,6 +10,7 @@ from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION, XL_DATA_LABEL_POS
 from pptx.oxml import parse_xml
 from pptx.oxml.ns import nsdecls
 from PIL import Image
+import csv
 import json
 import datetime
 import io
@@ -23,7 +24,6 @@ import math
 
 st.set_page_config(page_title="W3 AutoSlide", layout="wide")
 
-# カスタムCSS
 st.markdown("""
     <style>
     img { border-radius: 0px !important; }
@@ -66,6 +66,37 @@ LAYOUT_REVERSE_MAP = {v: k for k, v in LAYOUT_MAP.items()}
 
 if "saved_images" not in st.session_state:
     st.session_state["saved_images"] = []
+
+
+def parse_csv_line_safe(line_str):
+    if not line_str or not str(line_str).strip():
+        return []
+    try:
+        parsed = next(csv.reader([str(line_str).strip()], skipinitialspace=True))
+        return [c.strip() for c in parsed if c is not None]
+    except Exception:
+        return [c.strip() for c in str(line_str).split(",")]
+
+
+def parse_number_with_comma(val):
+    if val is None:
+        return 0.0
+    s = str(val).strip()
+    if not s:
+        return 0.0
+    # 「1億5,000万円」などの表現にも対応
+    oku_match = re.search(r'(\d+(?:,\d{3})*(?:\.\d+)?)\s*億\s*(\d+(?:,\d{3})*(?:\.\d+)?)?\s*万?', s)
+    if oku_match:
+        oku = float(oku_match.group(1).replace(",", ""))
+        man = float(oku_match.group(2).replace(",", "")) if oku_match.group(2) else 0.0
+        return oku * 10000.0 + man
+    cleaned = re.sub(r'[^\d\.\-]', '', s.replace(",", ""))
+    if not cleaned or cleaned in [".", "-"]:
+        return 0.0
+    num = float(cleaned)
+    if math.isnan(num) or math.isinf(num):
+        return 0.0
+    return num
 
 
 def call_gemini_with_retry(client, prompt, max_retries=5):
@@ -144,21 +175,14 @@ def sanitize_main_item(main_item, clean_ch_title):
     return main_item
 
 
-# ★【改善②】章の内容（タイトル・本文）に応じた固有データの抽出（他章データの流用防止）★
 def extract_chapter_specific_chart_data(chapter_title, body_text, raw_memo):
     combined = f"{chapter_title} {body_text}"
 
-    # 1. 月別売上推移（「1月：850万円」形式を正確に抽出）
     if any(kw in combined for kw in ["月別", "1月", "2月", "3月", "4月", "5月", "6月", "推移"]):
         month_matches = re.findall(r'(?:^|\n|\s)([1-9]|1[0-2])月[：:\s]+([\d,]+(?:\.\d+)?)\s*(?:万|万円)?', raw_memo)
         if len(month_matches) >= 3:
             cats = [f"{m[0]}月" for m in month_matches]
-            vals = []
-            for m in month_matches:
-                try:
-                    vals.append(float(m[1].replace(',', '')))
-                except Exception:
-                    vals.append(0.0)
+            vals = [parse_number_with_comma(m[1]) for m in month_matches]
             return {
                 "title": "月別売上推移",
                 "unit": "万円",
@@ -167,10 +191,9 @@ def extract_chapter_specific_chart_data(chapter_title, body_text, raw_memo):
                 "values": vals
             }
 
-    # 2. 商品カテゴリー別売上構成
     if any(kw in combined for kw in ["カテゴリー", "カテゴリ", "生活雑貨", "家電"]):
-        cat_matches = re.findall(r'(?:^|\n)([^\n：:]+?)[：:]\s*(\d+(?:\.\d+)?)\s*[%％]', raw_memo)
-        valid_cats = [(c.strip(), float(v)) for c, v in cat_matches if any(k in c for k in ["雑貨", "家電", "ファッション", "食品", "その他"])]
+        cat_matches = re.findall(r'(?:^|\n)([^\n：:]+?)[：:]\s*(\d+(?:,\d{3})*(?:\.\d+)?)\s*[%％]', raw_memo)
+        valid_cats = [(c.strip(), parse_number_with_comma(v)) for c, v in cat_matches if any(k in c for k in ["雑貨", "家電", "ファッション", "食品", "その他"])]
         if len(valid_cats) >= 3:
             return {
                 "title": "商品カテゴリー別売上構成",
@@ -180,31 +203,28 @@ def extract_chapter_specific_chart_data(chapter_title, body_text, raw_memo):
                 "values": [x[1] for x in valid_cats]
             }
 
-    # 3. 顧客年代構成
     if any(kw in combined for kw in ["年代", "20代", "30代", "40代", "50代", "60代"]):
-        age_matches = re.findall(r'(?:^|\n)((?:20|30|40|50|60代以上)[^\n：:]*?)[：:]\s*(\d+(?:\.\d+)?)\s*[%％]', raw_memo)
+        age_matches = re.findall(r'(?:^|\n)((?:20|30|40|50|60代以上)[^\n：:]*?)[：:]\s*(\d+(?:,\d{3})*(?:\.\d+)?)\s*[%％]', raw_memo)
         if len(age_matches) >= 3:
             return {
                 "title": "顧客の年代構成",
                 "unit": "％",
                 "categories": [m[0].strip() for m in age_matches],
                 "series_name": "年代別割合（％）",
-                "values": [float(m[1]) for m in age_matches]
+                "values": [parse_number_with_comma(m[1]) for m in age_matches]
             }
 
-    # 4. 販売チャネル別実績
     if any(kw in combined for kw in ["チャネル", "販売経路", "自社EC", "楽天市場", "Amazon"]):
-        ch_matches = re.findall(r'(?:^|\n)(自社EC[^\n：:]*|楽天市場|Amazon|その他)[：:]\s*(\d+(?:\.\d+)?)\s*[%％]', raw_memo)
+        ch_matches = re.findall(r'(?:^|\n)(自社EC[^\n：:]*|楽天市場|Amazon|その他)[：:]\s*(\d+(?:,\d{3})*(?:\.\d+)?)\s*[%％]', raw_memo)
         if len(ch_matches) >= 3:
             return {
                 "title": "販売チャネル別売上構成",
                 "unit": "％",
                 "categories": [m[0].strip() for m in ch_matches],
                 "series_name": "チャネル構成比（％）",
-                "values": [float(m[1]) for m in ch_matches]
+                "values": [parse_number_with_comma(m[1]) for m in ch_matches]
             }
 
-    # 5. 商品別販売実績（売上）
     if any(kw in combined for kw in ["商品別", "商品A", "商品B", "商品C", "ワイヤレスイヤホン", "収納ボックス"]):
         prod_blocks = re.findall(r'(商品[A-E][^：\n]*)[：:][^\n]*?(?:\n[^\n]*?)*?売上[：:]\s*([\d,]+(?:\.\d+)?)\s*万円', raw_memo)
         if len(prod_blocks) >= 3:
@@ -213,7 +233,7 @@ def extract_chapter_specific_chart_data(chapter_title, body_text, raw_memo):
                 "unit": "万円",
                 "categories": [p[0].strip() for p in prod_blocks],
                 "series_name": "売上高（万円）",
-                "values": [float(p[1].replace(',', '')) for p in prod_blocks]
+                "values": [parse_number_with_comma(p[1]) for p in prod_blocks]
             }
 
     return {
@@ -225,7 +245,6 @@ def extract_chapter_specific_chart_data(chapter_title, body_text, raw_memo):
     }
 
 
-# ★【改善①】グラフデータ整合性チェック＆自動補正関数★
 def verify_and_fix_chart_data(chart_info, layout_type, chapter_title, body_text, raw_memo):
     if not isinstance(chart_info, dict):
         chart_info = {}
@@ -234,19 +253,8 @@ def verify_and_fix_chart_data(chart_info, layout_type, chapter_title, body_text,
     raw_vals = chart_info.get("values", [])
 
     cats = [str(c).strip() for c in raw_cats if str(c).strip()] if isinstance(raw_cats, list) else []
-    vals = []
-    if isinstance(raw_vals, list):
-        for v in raw_vals:
-            try:
-                num_str = re.sub(r'[^\d\.\-]', '', str(v).replace(',', '').strip())
-                f_val = float(num_str) if num_str else 0.0
-                if math.isnan(f_val) or math.isinf(f_val):
-                    f_val = 0.0
-                vals.append(f_val)
-            except Exception:
-                vals.append(0.0)
+    vals = [parse_number_with_comma(v) for v in raw_vals] if isinstance(raw_vals, list) else []
 
-    # もしデータが不正または空なら、その章固有のデータを抽出
     if not cats or not vals or len(cats) != len(vals):
         extracted = extract_chapter_specific_chart_data(chapter_title, body_text, raw_memo)
         if extracted["categories"] and extracted["values"]:
@@ -871,10 +879,34 @@ def format_table_and_note(slide, total_width_pt=671.1, assigned_images=None, cap
 
         headers = table_data.get("headers", [])
         rows = table_data.get("rows", [])
-        target_cols = max(1, len(headers))
-        target_rows = max(1, len(rows)) + 1
 
+        # 全行から最大列数を算出し、入力された列項目を絶対に省略しない
+        max_row_cols = max([len(r) for r in rows if isinstance(r, list)] + [0])
+        target_cols = max(1, len(headers), max_row_cols)
+
+        # ヘッダーが不足している場合は補完
+        while len(headers) < target_cols:
+            headers.append(f"項目{len(headers) + 1}")
+
+        target_rows = max(1, len(rows)) + 1
         tbl_el = table._tbl
+
+        # 1. 不足している列をXMLレベルで動的追加
+        while len(table.columns) < target_cols:
+            tblGrid = tbl_el.tblGrid
+            sample_w = tblGrid.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}gridCol')[-1].attrib.get('w', '1500000')
+            tblGrid.append(parse_xml(f'<a:gridCol {nsdecls("a")} w="{sample_w}"/>'))
+            for tr in tbl_el.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}tr'):
+                last_tc = tr.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}tc')[-1]
+                new_tc = copy.deepcopy(last_tc)
+                for p in new_tc.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}txBody/{http://schemas.openxmlformats.org/drawingml/2006/main}p'):
+                    for r in p.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}r'):
+                        t = r.find('{http://schemas.openxmlformats.org/drawingml/2006/main}t')
+                        if t is not None:
+                            t.text = ""
+                tr.append(new_tc)
+
+        # 2. 余分な列をXMLレベルで物理削除
         while len(table.columns) > target_cols:
             col_to_remove = len(table.columns) - 1
             tblGrid = tbl_el.tblGrid
@@ -886,6 +918,7 @@ def format_table_and_note(slide, total_width_pt=671.1, assigned_images=None, cap
                 if col_to_remove < len(tcs):
                     tr.remove(tcs[col_to_remove])
 
+        # 3. 不足している行をXMLレベルで動的追加
         while len(table.rows) < target_rows:
             trs = tbl_el.findall('{http://schemas.openxmlformats.org/drawingml/2006/main}tr')
             last_tr = trs[-1]
@@ -898,23 +931,24 @@ def format_table_and_note(slide, total_width_pt=671.1, assigned_images=None, cap
                             t.text = ""
             tbl_el.append(new_tr)
 
-        for c_idx, h_text in enumerate(headers):
-            if c_idx < len(table.columns):
-                table.rows[0].cells[c_idx].text = str(h_text)
+        # 4. データを流し込み
+        for c_idx, h_text in enumerate(headers[:target_cols]):
+            table.rows[0].cells[c_idx].text = str(h_text)
 
         for r_idx, row_items in enumerate(rows):
             target_r_idx = r_idx + 1
-            if target_r_idx < len(table.rows):
-                for c_idx, val in enumerate(row_items):
-                    if c_idx < len(table.columns):
-                        table.rows[target_r_idx].cells[c_idx].text = str(val)
+            if target_r_idx < len(table.rows) and isinstance(row_items, list):
+                for c_idx in range(target_cols):
+                    val = row_items[c_idx] if c_idx < len(row_items) else ""
+                    table.rows[target_r_idx].cells[c_idx].text = str(val)
 
+        # 5. 列幅配分（合計を actual_width 内に収める）
         if target_cols == 3:
             proportions = [0.22, 0.38, 0.40]
         elif target_cols == 4:
             proportions = [0.20, 0.30, 0.30, 0.20]
         elif target_cols == 5:
-            proportions = [0.18, 0.22, 0.20, 0.20, 0.20]
+            proportions = [0.16, 0.24, 0.20, 0.20, 0.20]
         else:
             proportions = [1.0 / target_cols] * target_cols
 
@@ -1330,7 +1364,7 @@ def process_paragraph_runs(p, replace_map, chapter_num=None, chapter_title=None,
                 r.font.name = "メイリオ"
 
 
-def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=None, is_cover=False):
+def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=None, is_cover=False, is_index=False):
     shapes_to_remove = []
 
     notice_val = replace_map.get("[[注意文]]", "") or replace_map.get("[[補足文]]", "")
@@ -1392,13 +1426,12 @@ def process_slide_shapes(slide, replace_map, chapter_num=None, chapter_title=Non
             pass
 
 
-# ★【改善③】入力情報（数値・商品A〜E・チャネル・2027年目標等）の網羅性チェック★
 def run_quality_check(raw_memo, edited_chapters, doc_title):
     memo_topics = {
         "月別売上推移（1〜6月・計6,500万円）": ["850", "920", "1,100", "1100", "980", "1,250", "1250", "1,400", "1400", "6,500", "6500"],
         "カテゴリー別売上構成（生活雑貨35%・食品12%等）": ["生活雑貨", "35", "家電", "25", "ファッション", "20", "食品", "12"],
         "顧客年代構成（30〜40代中心・20代拡大）": ["20代", "30代", "40代", "58"],
-        "商品別実績（商品A〜Eの売上・利益率）": ["商品A", "商品B", "商品C", "商品D", "商品E", "40", "1,400", "1400"],
+        "商品別実績（商品A〜Eの売上・利益率・数量）": ["商品A", "商品B", "商品C", "商品D", "商品E", "40", "4,200", "4200", "1,400", "1400"],
         "販売チャネル構成（自社EC55%・モール拡大）": ["自社EC", "55", "楽天市場", "25", "Amazon", "15"],
         "キャンペーン実績比較（春・GW・初夏）": ["春の新生活", "ゴールデンウィーク", "初夏", "80", "100", "70", "720"],
         "2027年度目標（1.5億円・リピート率30%等）": ["1億5,000", "1.5億", "8,000", "30", "45"]
@@ -1418,12 +1451,7 @@ def run_quality_check(raw_memo, edited_chapters, doc_title):
         for ch in edited_chapters
     ])
 
-    results = {}
-    for topic, kws in memo_topics.items():
-        found = any(kw in all_slide_text for kw in kws)
-        results[topic] = found
-
-    return results
+    return {topic: any(kw in all_slide_text for kw in kws) for topic, kws in memo_topics.items()}
 
 
 # ==========================================
@@ -1535,7 +1563,7 @@ Amazon：15％
 
 【7. 現在の課題】
 ・新規顧客は増えているが、リピート購入につながっていない
-・商品カテゴリーによって利益率の差がある
+・商品カテゴリーによって利益率に差がある
 ・自社ECへの売上依存度が高い
 ・SNSのフォロワー数は増えているが、購入へのつながりが不明確
 ・販促キャンペーンの効果測定が十分にできていない
@@ -1584,34 +1612,21 @@ with col_btn1:
                         "image_contexts": image_contexts
                     }
 
-                    # ★【改善③・④】入力情報の100%網羅とデータ性質に応じたグラフ・表自動選定★
                     single_pass_prompt = f"""
                     あなたは卓越した経営コンサルタント兼プレゼン資料作成のプロフェッショナルです。
                     以下の入力メモの数値・事実・項目・目標を【1つも省略せず正確に反映】したプレゼンスライドJSONを作成してください。
-                    また、元メモに明記された事実（実績数値・目標数値）と、分析・推測（「〜可能性がある」「〜とみられる」等）を明確に区別して記述してください。
+                    元メモに明記された事実（実績数値・目標数値）と、分析・推測（「〜可能性がある」等）を明確に区別して記述してください。
 
                     【入力データ】
                     {json.dumps(prompt_data, ensure_ascii=False, indent=2)}
 
-                    【グラフ・表の自動選択ルール】
-                    データの性質に合わせて最適な "layout_type" を選定してください:
-                    - "line_chart": 時系列の推移（1月〜6月の月別売上など）
-                    - "pie_chart": 構成比・シェア・内訳（合計100%前後のカテゴリー別構成、年代構成、チャネル構成など）
-                    - "bar_chart": 項目別の数値比較（商品別売上、キャンペーン別売上など）
-                    - "table": 複数属性の比較表や一覧表（商品A〜Eの販売数量・売上・利益率の一覧、キャンペーン比較表、5大販売戦略一覧など）
-                    - "step": 実行ステップやロードマップ
-                    - "checklist": 現状の課題や確認事項一覧
-                    - "text": 経営方針・目標・まとめなどの解説スライド
-
-                    【必須網羅ルール（省略厳禁）】
-                    1. 月別売上（1月:850万円, 2月:920万円, 3月:1,100万円, 4月:980万円, 5月:1,250万円, 6月:1,400万円, 上期累計6,500万円, 1月比6月約65%増）を正確に反映すること。
-                    2. カテゴリー別構成（生活雑貨35%, 家電・デジタル25%, ファッション20%, 食品・飲料12%, その他8%）を正確に反映すること。
-                    3. 顧客年代構成（20代15%, 30代30%, 40代28%, 50代18%, 60代以上9%, 30〜40代計58%）を正確に反映すること。
-                    4. 商品A〜Eの全5商品（商品A:4,200個/1,400万円/35%, 商品B:1,800個/1,250万円/28%, 商品C:3,500個/1,050万円/40%, 商品D:2,800個/780万円/22%, 商品E:2,100個/920万円/32%）の数値と特徴を漏れなく反映すること。
-                    5. 販売チャネル別構成（自社EC55%, 楽天市場25%, Amazon15%, その他5%）を正確に反映すること。
-                    6. キャンペーン3件（春の新生活:3/1〜3/31/広告80万/売上650万/新規320人, GWセール:4/25〜5/10/広告100万/売上580万/新規250人, 初夏まとめ買い:6/1〜6/30/広告70万/売上720万/新規400人）を正確に反映すること。
-                    7. 2027年度目標（年間売上1億5,000万円、新規顧客年間8,000人、リピート購入率20%→30%、自社EC以外構成比45%）を必ずスライド内に明記すること。
-                    8. 5大販売戦略（①リピーター獲得、②商品戦略、③販売チャネル拡大、④SNS販促強化、⑤販促施策の改善）をすべて含めること。
+                    【必須ルール】
+                    1. 商品別販売実績の表（table）では、列見出しに ["商品名", "商品詳細", "販売数量", "売上高", "利益率"] を含め、商品A〜Eの5行すべてを省略せず出力してください。カンマ区切り数値（4,200、1,400万円など）はそのまま保持してください。
+                    2. キャンペーン実績比較の表（table）では、列見出しに ["キャンペーン名", "実施期間", "広告費", "売上高", "新規顧客"] を含め、3キャンペーンすべてを出力してください。
+                    3. 5大販売戦略の表（table）では、①〜⑤の5戦略すべてを出力してください。
+                    4. 2027年度目標（年間売上目標1億5,000万円、新規顧客数年間8,000人、リピート購入率20%→30%、自社EC以外構成比45%）を必ずスライドに含めてください。
+                    5. "step" の "step_descs" には先頭に「①」「1.」「STEP 1」などの番号記号を付けないでください。
+                    6. "main_item" は15文字以内の短いキャッチコピーにしてください。
 
                     【出力形式】
                     純粋なJSONのみを出力してください。
@@ -1642,7 +1657,7 @@ with col_btn1:
                             "unit": "万円",
                             "categories": ["1月", "2月", "3月", "4月", "5月", "6月"],
                             "series_name": "売上高（万円）",
-                            "values": [850.0, 920.0, 1100.0, 980.0, 1250.0, 1400.0]
+                            "values": [850, 920, 1100, 980, 1250, 1400]
                           }}
                         }}
                       ]
@@ -1671,7 +1686,7 @@ with col_btn1:
 # ==========================================
 if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state:
     st.subheader("✏️ AI解析結果のプレビュー ＆ WEB編集フォーム")
-    st.caption("各スライドの内容を自由に変更できます。")
+    st.caption("各スライドの内容を自由に変更できます。カンマを含む数値はダブルクォーテーション（例: \"4,200\"）で囲むと安全です。")
 
     if "refined_title" in st.session_state:
         doc_title = st.text_input("資料タイトル", value=st.session_state["refined_title"], key="refined_title_box")
@@ -1726,7 +1741,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 e_assigned_indices = []
                 e_captions = []
 
-            # 1. STEP詳細フォーム
             if e_layout == "step":
                 st.markdown("**ステップ詳細（最大4ステップ）**")
                 s_descs = ch.get("step_descs", [])
@@ -1736,8 +1750,8 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         s_descs = b_steps[:4]
                 if not isinstance(s_descs, list) or len(s_descs) < 4:
                     s_descs = [
-                        "リピーター獲得：購入後フォローメール配信・会員限定クーポン・ポイント制度見直し",
-                        "商品戦略：高利益率な商品C（利益率40%）の販売強化および商品Aとのセット販売検討",
+                        "リピーター獲得：購入後メール配信・会員限定クーポン・ポイント制度見直し",
+                        "商品戦略：高利益率な商品C（利益率40%）の販売強化と商品Aとのセット販売検討",
                         "販売チャネル拡大：楽天市場・Amazonの商品ページ改善と広告運用強化",
                         "SNS販促・効果測定：Instagramでの活用シーン・レビュー発信とキャンペーンROAS検証"
                     ]
@@ -1752,17 +1766,16 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
             else:
                 e_s_descs = [clean_step_text(t) for t in ch.get("step_descs", [])]
 
-            # 2. チェックリスト詳細フォーム
             if e_layout == "checklist":
                 st.markdown("**✅ チェックリスト設定（最大6項目）**")
                 c_intro_val = st.text_input("チェックリスト導入文", value=ch.get("checklist_intro", "EC事業における現在の主要課題一覧です。"), key=f"c_intro_{idx}")
                 c_items_def = ch.get("checklist_items", [])
                 if not isinstance(c_items_def, list) or not c_items_def:
                     c_items_def = [
-                        "新規顧客は増えているが、リピート購入につながっていない（現状リピート率20%→目標30%）",
+                        "新規顧客は増えているが、リピート購入につながっていない（リピート率20%→目標30%）",
                         "商品カテゴリーによって利益率に差がある（最高40%〜最低22%）",
-                        "自社ECサイトへの売上依存度が高い（自社EC55%・他チャネル45%へ拡大が目標）",
-                        "SNSのフォロワー数は増えているが、実際の購入へのつながりが不明確",
+                        "自社ECサイトへの売上依存度が高い（自社EC55%・他チャネル45%へ拡大目標）",
+                        "SNSのフォロワー数は増えているが、購入へのつながりが不明確",
                         "販促キャンペーンの効果測定が十分にできていない"
                     ]
                 e_c_items = []
@@ -1773,47 +1786,41 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         val_item = st.text_input(f"チェック項目 {ci+1}", value=def_item, key=f"ci_{idx}_{ci}")
                         if val_item.strip():
                             e_c_items.append(val_item.strip())
-                c_outro_val = st.text_input("確認後の案内文", value=ch.get("checklist_outro", "特にリピーター獲得施策を最優先とし、2027年度売上1億5,000万円達成を目指します。"), key=f"c_outro_{idx}")
+                c_outro_val = st.text_input("確認後の案内文", value=ch.get("checklist_outro", "リピーター獲得を最優先とし、2027年度売上1億5,000万円達成を目指します。"), key=f"c_outro_{idx}")
             else:
                 c_intro_val = ch.get("checklist_intro", "")
                 e_c_items = ch.get("checklist_items", [])
                 c_outro_val = ch.get("checklist_outro", "")
 
-            # 3. テーブル詳細フォーム
             if e_layout == "table":
                 st.markdown("**📋 表組み（比較表・施策一覧・タスク管理）データ設定**")
                 tbl_raw = ch.get("table")
                 if not isinstance(tbl_raw, dict):
                     tbl_raw = {}
-                h_list = tbl_raw.get("headers")
-                if not isinstance(h_list, list) or not h_list:
-                    h_list = ["項目", "詳細・実績", "備考・狙い"]
-                r_list = tbl_raw.get("rows")
-                if not isinstance(r_list, list) or not r_list:
-                    r_list = [
-                        ["商品A：生活雑貨セット", "販売数量4,200個 / 売上1,400万円", "利益率35%・売上トップ商品"],
-                        ["商品B：ワイヤレスイヤホン", "販売数量1,800個 / 売上1,250万円", "利益率28%"],
-                        ["商品C：収納ボックス", "販売数量3,500個 / 売上1,050万円", "利益率40%・最高利益率の重要商品"],
-                        ["商品D：季節限定食品セット", "販売数量2,800個 / 売上780万円", "利益率22%・購入頻度が高い傾向"],
-                        ["商品E：ファッション小物", "販売数量2,100個 / 売上920万円", "利益率32%"]
-                    ]
-                t_cols_input = st.text_input("列見出し（カンマ区切り・2〜5列）", value=", ".join(map(str, h_list)), key=f"th_{idx}")
-                e_headers = [c.strip() for c in t_cols_input.split(",") if c.strip()]
+                h_list = tbl_raw.get("headers", ["項目", "詳細・実績", "備考・狙い"])
+                r_list = tbl_raw.get("rows", [])
+
+                h_display_str = ", ".join([f'"{x}"' if "," in str(x) else str(x) for x in h_list])
+                t_cols_input = st.text_input("列見出し（カンマ区切り・全列反映）", value=h_display_str, key=f"th_{idx}")
+                e_headers = parse_csv_line_safe(t_cols_input)
 
                 num_display_rows = max(len(r_list), 5)
                 st.caption(f"各行のデータ（カンマ区切り・全{num_display_rows}行）")
                 e_rows = []
                 for ri in range(num_display_rows):
-                    default_row_str = ", ".join(map(str, r_list[ri])) if len(r_list) > ri and isinstance(r_list[ri], list) else ""
+                    if len(r_list) > ri and isinstance(r_list[ri], list):
+                        default_row_str = ", ".join([f'"{x}"' if "," in str(x) else str(x) for x in r_list[ri]])
+                    else:
+                        default_row_str = ""
                     row_str = st.text_input(f"{ri+1}行目", value=default_row_str, key=f"tr_{idx}_{ri}")
-                    if row_str.strip():
-                        e_rows.append([c.strip() for c in row_str.split(",")])
+                    parsed_row = parse_csv_line_safe(row_str)
+                    if any(cell != "" for cell in parsed_row):
+                        e_rows.append(parsed_row)
                 t_note = st.text_input("表の注記（任意）", value=tbl_raw.get("note", ""), key=f"tn_{idx}")
                 e_table = {"headers": e_headers, "rows": e_rows, "note": t_note}
             else:
                 e_table = ch.get("table") if isinstance(ch.get("table"), dict) else {}
 
-            # 4. グラフ設定フォーム（章固有データ優先で流用を防止）
             c_info = ch.get("chart_info")
             if not isinstance(c_info, dict) or not c_info.get("values"):
                 c_info = extract_chapter_specific_chart_data(e_title, e_body, raw_memo)
@@ -1839,16 +1846,12 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     )
                 with g_cols[3]:
                     def_vals = c_info.get("values", [])
-                    clean_vals = [str(v).replace(',', '') for v in def_vals]
-                    g_vals_str = st.text_input("数値データ（カンマ区切り）", value=",".join(clean_vals), key=f"gv_{idx}")
+                    clean_vals = [f'"{v}"' if "," in str(v) else str(v) for v in def_vals]
+                    g_vals_str = st.text_input("数値データ（カンマ区切り・カンマ付き数値可）", value=",".join(clean_vals), key=f"gv_{idx}")
 
-                cats_list = [c.strip() for c in g_cats_str.split(",") if c.strip()]
-                vals_list = []
-                for v in g_vals_str.split(","):
-                    try:
-                        vals_list.append(float(re.sub(r'[^\d\.]', '', v.replace(',', ''))))
-                    except Exception:
-                        pass
+                cats_list = parse_csv_line_safe(g_cats_str)
+                raw_val_tokens = parse_csv_line_safe(g_vals_str)
+                vals_list = [parse_number_with_comma(v) for v in raw_val_tokens if str(v).strip() != ""]
 
                 edited_c_info = {
                     "title": g_title,
@@ -1898,7 +1901,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
 
                 if not template_path:
                     for f in os.listdir(current_dir):
-                        if f.endswith('.pptx') and not any(kw in f for kw in ["報告", "提案書", "上期", "成長戦略", "集客", "ネクストライフ"]):
+                        if f.endswith('.pptx') and not any(kw in f for kw in ["報告", "提案書", "上期", "成長戦略", "集客", "ネクストライフ", "EC事業"]):
                             template_path = os.path.join(current_dir, f)
                             break
 
@@ -1919,7 +1922,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 }
                 process_slide_shapes(cover_slide, cover_map, is_cover=True)
 
-                # 2. 目次スライド
+                # 2. 目次スライド（全章を漏れなく反映）
                 index_slide = duplicate_slide_safe(prs, 1)
                 index_map = {}
                 for ch_idx, ch in enumerate(edited_chapters):
@@ -1937,7 +1940,26 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                     index_map[f"P[[章{k}ページ]]"] = ""
                     index_map[f"[[章{k}ページ]]"] = ""
 
-                process_slide_shapes(index_slide, index_map)
+                process_slide_shapes(index_slide, index_map, is_index=True)
+
+                # テンプレート目次枠数を超える章がある場合、目次スライドに追加行を印字
+                max_tpl_index_slots = 6
+                if len(edited_chapters) > max_tpl_index_slots:
+                    extra_chapters = edited_chapters[max_tpl_index_slots:]
+                    extra_box = index_slide.shapes.add_textbox(Pt(240.7), Pt(448.0), Pt(420.0), Pt(100.0))
+                    tf_ex = extra_box.text_frame
+                    tf_ex.word_wrap = True
+                    for ex_i, ex_ch in enumerate(extra_chapters):
+                        ex_num = f"{max_tpl_index_slots + ex_i + 1:02d}"
+                        ex_page = max_tpl_index_slots + ex_i + 2
+                        ex_title = clean_chapter_title(ex_ch.get("chapter_title", ""))
+                        p_ex = tf_ex.add_paragraph() if ex_i > 0 else tf_ex.paragraphs[0]
+                        p_ex.text = f"{ex_num} {ex_title}    P{ex_page}"
+                        p_ex.font.name = "メイリオ"
+                        p_ex.font.size = Pt(14.0)
+                        p_ex.font.bold = True
+                        p_ex.font.color.rgb = RGBColor(2, 24, 46)
+
                 format_and_align_index_slide(index_slide)
 
                 inserted_image_report = []
@@ -1995,8 +2017,8 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                             step_descs = b_steps[:4]
                     if not isinstance(step_descs, list) or len(step_descs) < 4:
                         step_descs = [
-                            "リピーター獲得：購入後フォローメール配信・会員限定クーポン・ポイント制度見直し",
-                            "商品戦略：高利益率な商品C（利益率40%）の販売強化および商品Aとのセット販売検討",
+                            "リピーター獲得：購入後メール配信・会員限定クーポン・ポイント制度見直し",
+                            "商品戦略：高利益率な商品C（利益率40%）の販売強化と商品Aとのセット販売検討",
                             "販売チャネル拡大：楽天市場・Amazonの商品ページ改善と広告運用強化",
                             "SNS販促・効果測定：Instagramでの活用シーン・レビュー発信とキャンペーンROAS検証"
                         ]
@@ -2005,7 +2027,7 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         ch_map[f"[[STEP{idx_s}の説明]]"] = clean_step_text(raw_desc_s)
 
                     c_intro = ch.get("checklist_intro", "EC事業における現在の主要課題一覧です。")
-                    c_outro = ch.get("checklist_outro", "特にリピーター獲得施策を最優先とし、2027年度売上1億5,000万円達成を目指します。")
+                    c_outro = ch.get("checklist_outro", "リピーター獲得を最優先とし、2027年度売上1億5,000万円達成を目指します。")
                     c_items = ch.get("checklist_items", [])
                     ch_map["[[チェックリスト導入文]]"] = c_intro
                     ch_map["[[チェック後の案内文]]"] = c_outro
@@ -2035,7 +2057,6 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                         for af in assigned_imgs:
                             inserted_image_report.append(f"スライド {ch_page_num}（{clean_ch_title}）: 『{af['filename']}』")
 
-                    # ★【改善①・②・④】グラフデータ検証＆描画★
                     if should_draw_chart:
                         c_dict, is_valid_chart = verify_and_fix_chart_data(
                             raw_chart_info, layout_type, clean_ch_title, body_text_val, raw_memo
@@ -2194,13 +2215,11 @@ if st.session_state.get("analyzed", False) and "parsed_data" in st.session_state
                 st.balloons()
                 st.success(f"🎉 『{download_filename}』の自動構築が完了しました！（全 {len(prs.slides)} ページ）")
 
-                # グラフデータ整合性検証レポート
                 if chart_audit_report:
                     with st.expander("📈 **グラフデータ整合性チェック結果（元データ照合）**", expanded=True):
                         for line in chart_audit_report:
                             st.write(line)
 
-                # AI品質チェック＆重要事項網羅性診断レポート
                 q_report = run_quality_check(raw_memo, edited_chapters, doc_title)
                 with st.expander("📊 **AI品質チェック＆網羅性診断レポート（入力情報反映確認）**", expanded=True):
                     st.markdown("元メモに記載された重要データ・施策・目標が、資料内に反映されているかを自動検証しました。")
